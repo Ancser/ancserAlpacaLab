@@ -1,0 +1,148 @@
+# ===========================
+# 量化交易系统配置文件
+# ===========================
+
+# 数据配置
+data:
+  source: "yahoo"  # yahoo | alpaca | csv
+  cache_dir: "data_cache"
+  lookback_days: 400
+  
+  # 基准与防御资产
+  benchmarks:
+    - SPY
+    - QQQ
+  
+  defensive_assets:
+    - BIL   # 现金等价物
+    - GLD   # 黄金
+    - TLT   # 长期国债
+  
+  # 行业ETF (可选)
+  sector_etfs:
+    - XLV   # Healthcare
+    - XLF   # Financials
+    - XLE   # Energy
+
+# 股票池配置
+universe:
+  mode: "sp500_nasdaq100"  # sp500 | nasdaq100 | sp500_nasdaq100
+  exclude_tickers:
+    - WBA
+  min_constituents: 90  # 最少成分股数量检查
+
+# 因子配置
+factors:
+  # 动量因子
+  momentum:
+    enabled: true
+    lookback: 252
+    skip_recent: 21
+    weight: 0.70
+  
+  # 短期反转 (pullback)
+  pullback:
+    enabled: true
+    lookback: 5
+    weight: 0.30
+  
+  # 可扩展: 添加新因子在这里
+  # value:
+  #   enabled: false
+  #   weight: 0.0
+
+# 过滤条件
+filters:
+  min_price: 5.0
+  min_adv_dollar: 30_000_000  # 20日平均成交额
+  adv_window: 20
+
+# 趋势/风险开关
+regime:
+  enabled: true
+  indicator: "SPY"
+  sma_length: 250
+  momentum_length: 63
+  
+  # 风险关闭时的行为
+  risk_off_mode: "defensive"  # defensive | cash | reduce_exposure
+  defensive_allocation:
+    BIL: 0.60
+    GLD: 0.30
+    TLT: 0.10
+
+# 组合构建
+portfolio:
+  top_n: 30
+  rank_buffer: 10          # 保留排名在 top_n + buffer 内的持仓
+  min_hold_days: 10        # 最短持有期
+  max_weight: 0.10         # 单股最大权重
+  min_names_to_trade: 8    # 少于此数量则转防御
+  
+  # 调仓频率
+  rebalance: "W-FRI"       # D | W-FRI | W-MON | M
+  
+  # 止盈止损 (可选, 日内检查)
+  stop_loss:
+    enabled: false
+    threshold: -0.08       # -8% 止损
+  
+  take_profit:
+    enabled: false
+    threshold: 0.20        # +20% 止盈
+
+# 交易成本
+costs:
+  commission_bps: 5.0      # 每边佣金 (bps)
+  slippage_bps: 10.0       # 滑点
+  total_bps: 30.0          # 总单边成本
+  min_trade_amount: 50     # 最小交易金额 (USD)
+
+# 回测配置
+backtest:
+  start_date: null         # null = auto (今天往前推 years)
+  end_date: null           # null = 今天
+  years: 10
+  initial_capital: 100000
+  
+  # 滚动窗口测试
+  rolling_window:
+    enabled: false
+    window_years: 4
+    step_years: 1
+
+# 执行配置 (Alpaca)
+execution:
+  mode: "paper"            # paper | live
+  
+  # 安全检查
+  max_order_size_pct: 0.15  # 单笔订单不超过账户15%
+  max_daily_trades: 50
+  
+  # 订单类型
+  order_type: "market"      # market | limit
+  time_in_force: "DAY"      # DAY | GTC
+  
+  # 重试机制
+  max_retries: 3
+  retry_delay: 2
+
+# 日志配置
+logging:
+  level: "INFO"            # DEBUG | INFO | WARNING | ERROR
+  log_dir: "logs"
+  save_trades: true
+  save_positions: true
+
+# 告警配置
+alerts:
+  enabled: false
+  email: null
+  slack_webhook: null
+  
+  # 触发条件
+  triggers:
+    - type: "drawdown"
+      threshold: -0.10
+    - type: "position_count"
+      threshold: 5
