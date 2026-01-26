@@ -482,9 +482,16 @@ def test_factors():
     
     for factor_name, factor_df in factors.items():
         recent_factor = factor_df.last('365D')
-        ic_df = analyzer.calculate_ic(recent_factor, recent_returns, periods=[5, 20])
-        ic_stats = analyzer.ic_summary(ic_df)
         
+        # 確保有足夠的數據計算 forward returns
+        ic_df = analyzer.calculate_ic(recent_factor, recent_returns, periods=[5, 20])
+        
+        # 檢查是否有有效結果
+        if ic_df.empty or ic_df.isna().all().all():
+            print(f"\n[{factor_name}] ⚠️  數據不足，無法計算 IC")
+            continue
+        
+        ic_stats = analyzer.ic_summary(ic_df)
         print(f"\n[{factor_name}]")
         print(ic_stats)
     
