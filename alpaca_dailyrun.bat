@@ -26,7 +26,7 @@ echo [START] %date% %time% - Starting Alpaca Bot >> logs\dailyrun.log
 :: 參數說明: 
 :: --paper : 使用模擬交易
 :: >> logs\... : 將輸出寫入日誌檔
-"%PYTHON_EXE%" alpaca_execute.py --paper >> logs\dailyrun.log 2>&1
+"%PYTHON_EXE%" alpaca_execute.py --paper --force >> logs\dailyrun.log 2>&1
 
 :: 檢查執行結果
 if %errorlevel% neq 0 (

@@ -302,8 +302,15 @@ class FactorAnalyzer:
                 ic = f[common].corr(r[common], method='spearman')
                 ic_series.append({'date': date, 'ic': ic})
             
-            results[f'{period}d'] = pd.DataFrame(ic_series).set_index('date')
-        
+                if ic_series:
+                    ic_df = pd.DataFrame(ic_series)
+                    if 'date' in ic_df.columns:
+                        results[f'{period}d'] = ic_df.set_index('date')['ic']
+                    else:
+                        results[f'{period}d'] = pd.Series(dtype='float64')
+                else:
+                    results[f'{period}d'] = pd.Series(dtype='float64')
+
         return pd.DataFrame(results)
     
     @staticmethod
@@ -361,6 +368,27 @@ class FactorAnalyzer:
         df = pd.DataFrame(group_rets)
         return df.pivot(index='date', columns='quantile', values='return')
 
+def plot_factor_scores(score_df):
+    """繪製複合得分趨勢圖"""
+    try:
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(12, 6))
+        # 只取最後 60 天顯示，避免圖表太亂
+        recent_scores = score_df.tail(60)
+        for col in recent_scores.columns:
+            plt.plot(recent_scores.index, recent_scores[col], label=col, linewidth=1.5)
+        
+        plt.axhline(y=0, color='black', linestyle='--', alpha=0.3)
+        plt.title("複合因子得分趨勢 (Composite Factor Scores)")
+        plt.legend(loc='upper left', bbox_to_anchor=(1, 1))
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.show()
+    except Exception as e:
+        print(f"繪圖失敗: {e}")
+
+# 在 test_factors() 函數最後加入調用：
+# plot_factor_scores(score)
 
 # ==========================================
 # 滚动窗口回测
@@ -495,6 +523,7 @@ def test_factors():
         print(f"\n[{factor_name}]")
         print(ic_stats)
     
+    plot_factor_scores(score)
     print("\n✅ 因子测试完成!")
 
 

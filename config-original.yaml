@@ -13,15 +13,10 @@ data:
     - SPY
     - QQQ
   
-  benchmarks:
-    - SPY
-    - QQQ
-  
   defensive_assets:
-    - GLD   # 黃金
-    - SLV   # 白銀
-    - EWJ   # 日本 ETF (iShares MSCI Japan)
-    - DXJ   # 日本 ETF (匯率對沖版，若看好日圓升值，建議用 EWJ)
+    - BIL   # 现金等价物
+    - GLD   # 黄金
+    - TLT   # 长期国债
   
   # 行业ETF (可选)
   sector_etfs:
@@ -31,17 +26,10 @@ data:
 
 # 股票池配置
 universe:
-  mode: "custom"  # 修改為 custom 模式
-  custom_tickers: # 新增一個自定義列表
-    - QQQ
-    - EWJ   # 日本
-    - DXJ   # 日本 (匯率對沖)
-    - GLD   # 黃金
-    - SLV   # 白銀
-    - IAU   # 黃金 (低費率)
-    - PPLT  # 鉑金 (可選)
-    - DFJ  # 日本小盤
-  exclude_tickers: []
+  mode: "sp500_nasdaq100"  # sp500 | nasdaq100 | sp500_nasdaq100
+  exclude_tickers:
+    - WBA
+  min_constituents: 90  # 最少成分股数量检查
 
 # 因子配置
 factors:
@@ -85,11 +73,11 @@ regime:
 
 # 组合构建
 portfolio:
-  top_n: 5
+  top_n: 30
   rank_buffer: 10          # 保留排名在 top_n + buffer 内的持仓
   min_hold_days: 10        # 最短持有期
-  max_weight: 0.40         # 单股最大权重
-  min_names_to_trade: 1    # 少于此数量则转防御
+  max_weight: 0.10         # 单股最大权重
+  min_names_to_trade: 8    # 少于此数量则转防御
   
   # 调仓频率
   rebalance: "W-FRI"       # D | W-FRI | W-MON | M

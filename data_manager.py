@@ -246,7 +246,9 @@ class DataManager:
         """获取股票池列表"""
         mode = self.config['universe']['mode']
         
-        if mode == "sp500":
+        if mode == "custom":
+            return self.config['universe'].get('custom_tickers', [])
+        elif mode == "sp500":
             return self._get_sp500()
         elif mode == "nasdaq100":
             return self._get_nasdaq100()
