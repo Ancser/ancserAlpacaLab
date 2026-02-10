@@ -550,6 +550,7 @@ def main(args):
     cash = float(account.cash)
     buying_power = float(account.buying_power)
     
+    logger.info(f"  Account Number: {account.account_number}")
     logger.info(f"\nAccount status:")
     logger.info(f"  Equity: ${equity:,.2f}")
     logger.info(f"  Cash: ${cash:,.2f}")

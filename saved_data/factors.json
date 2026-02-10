@@ -1,0 +1,39 @@
+{
+  "haha": {
+    "config": {
+      "momentum_12_1": {
+        "enabled": false,
+        "weight": 0.7,
+        "lookback": 252,
+        "skip": 21
+      },
+      "pullback_5d": {
+        "enabled": true,
+        "weight": 0.3,
+        "lookback": 5
+      },
+      "rsi": {
+        "enabled": false,
+        "weight": 0,
+        "period": 14
+      },
+      "trend_strength": {
+        "enabled": false,
+        "weight": 0,
+        "long": 50,
+        "short": 20
+      },
+      "volatility": {
+        "enabled": false,
+        "weight": 0,
+        "period": 20
+      },
+      "volume_surge": {
+        "enabled": false,
+        "weight": 0,
+        "period": 20
+      }
+    },
+    "saved_at": "2026-02-09T21:52:37.584990"
+  }
+}

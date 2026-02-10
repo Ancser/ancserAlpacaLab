@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Factor Analysis Dashboard — AncserQuant</title>
+    <meta name="description" content="Interactive quant factor analysis, backtesting, and rolling window comparison dashboard">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Header -->
+    <header id="app-header">
+        <div class="header-left">
+            <div class="logo-mark">⚡</div>
+            <div>
+                <h1>Factor Analysis Dashboard</h1>
+                <span class="subtitle">AncserQuant Lab</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="status-pill" id="statusPill">
+                <span class="status-dot"></span>
+                <span id="statusText">Ready</span>
+            </div>
+        </div>
+    </header>
+
+    <main id="app-main">
+        <!-- Left Sidebar: Factor Controls -->
+        <aside id="sidebar-left" class="sidebar">
+            <div class="sidebar-section">
+                <h2 class="section-title">
+                    <span class="icon">🧬</span> Factors
+                </h2>
+                <div id="factorControls" class="factor-list">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h2 class="section-title">
+                    <span class="icon">📋</span> Universe
+                </h2>
+                <div class="control-group">
+                    <label>Mode</label>
+                    <select id="universeMode">
+                        <option value="sp500_nasdaq100" selected>S&P 500 + Nasdaq 100</option>
+                        <option value="sp500">S&P 500 Only</option>
+                        <option value="nasdaq100">Nasdaq 100 Only</option>
+                        <option value="custom">Custom Tickers</option>
+                    </select>
+                </div>
+                <div class="control-group" id="customTickersGroup" style="display:none;">
+                    <label>Tickers (comma-separated)</label>
+                    <input type="text" id="customTickers" placeholder="AAPL, MSFT, GOOGL..." />
+                </div>
+            </div>
+        </aside>
+
+        <!-- Center Content -->
+        <section id="content-center">
+            <!-- Settings Bar -->
+            <div class="settings-bar">
+                <div class="settings-row">
+                    <div class="control-group compact">
+                        <label>Period</label>
+                        <select id="backtestYears">
+                            <option value="1">1 Year</option>
+                            <option value="2">2 Years</option>
+                            <option value="3">3 Years</option>
+                            <option value="5" selected>5 Years</option>
+                            <option value="7">7 Years</option>
+                            <option value="10">10 Years</option>
+                            <option value="15">15 Years</option>
+                            <option value="20">20 Years</option>
+                        </select>
+                    </div>
+                    <div class="control-group compact">
+                        <label>Rebalance</label>
+                        <select id="rebalanceFreq">
+                            <option value="daily">Daily</option>
+                            <option value="weekly_fri" selected>Weekly (Fri)</option>
+                            <option value="weekly_mon">Weekly (Mon)</option>
+                            <option value="2week">Bi-Weekly</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="quarterly">Quarterly</option>
+                            <option value="half_year">Half Year</option>
+                            <option value="yearly">Yearly</option>
+                        </select>
+                    </div>
+                    <div class="control-group compact">
+                        <label>Top N</label>
+                        <input type="number" id="topN" value="10" min="1" max="100" />
+                    </div>
+                    <div class="control-group compact">
+                        <label>Rolling Window</label>
+                        <select id="rollingWindow">
+                            <option value="0">Off</option>
+                            <option value="1" selected>1 Year</option>
+                            <option value="2">2 Years</option>
+                            <option value="3">3 Years</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" id="btnRunBacktest" onclick="runBacktest()">
+                        <span class="btn-icon">▶</span> Run Backtest
+                    </button>
+                </div>
+            </div>
+
+            <!-- Stats Cards -->
+            <div class="stats-grid" id="statsGrid" style="display:none;">
+                <div class="stat-card strategy-card">
+                    <div class="stat-label">Strategy</div>
+                    <div class="stat-values">
+                        <div><span class="stat-key">CAGR</span> <span class="stat-val" id="statCAGR">—</span></div>
+                        <div><span class="stat-key">MaxDD</span> <span class="stat-val" id="statMaxDD">—</span></div>
+                        <div><span class="stat-key">Sharpe</span> <span class="stat-val" id="statSharpe">—</span></div>
+                        <div><span class="stat-key">WinRate</span> <span class="stat-val" id="statWinRate">—</span></div>
+                    </div>
+                </div>
+                <div class="stat-card spy-card">
+                    <div class="stat-label">SPY</div>
+                    <div class="stat-values">
+                        <div><span class="stat-key">CAGR</span> <span class="stat-val" id="statSPY_CAGR">—</span></div>
+                        <div><span class="stat-key">MaxDD</span> <span class="stat-val" id="statSPY_MaxDD">—</span></div>
+                        <div><span class="stat-key">Sharpe</span> <span class="stat-val" id="statSPY_Sharpe">—</span></div>
+                    </div>
+                </div>
+                <div class="stat-card qqq-card">
+                    <div class="stat-label">QQQ</div>
+                    <div class="stat-values">
+                        <div><span class="stat-key">CAGR</span> <span class="stat-val" id="statQQQ_CAGR">—</span></div>
+                        <div><span class="stat-key">MaxDD</span> <span class="stat-val" id="statQQQ_MaxDD">—</span></div>
+                        <div><span class="stat-key">Sharpe</span> <span class="stat-val" id="statQQQ_Sharpe">—</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Full Period Chart -->
+            <div class="chart-container" id="fullChartContainer">
+                <h3 class="chart-title">Full-Period Equity Curve</h3>
+                <div class="chart-wrapper">
+                    <canvas id="fullChart"></canvas>
+                </div>
+                <div class="chart-placeholder" id="fullChartPlaceholder">
+                    <div class="placeholder-icon">📈</div>
+                    <p>Configure factors and click <strong>Run Backtest</strong></p>
+                </div>
+            </div>
+
+            <!-- Rolling Window Chart -->
+            <div class="chart-container" id="rollingChartContainer">
+                <h3 class="chart-title">Rolling 1-Year Window Comparison</h3>
+                <div class="chart-wrapper">
+                    <canvas id="rollingChart"></canvas>
+                </div>
+                <div class="chart-placeholder" id="rollingChartPlaceholder">
+                    <div class="placeholder-icon">🔄</div>
+                    <p>Enable rolling windows and run backtest to compare periods</p>
+                </div>
+            </div>
+
+            <!-- Rolling Stats Table -->
+            <div class="rolling-stats-container" id="rollingStatsContainer" style="display:none;">
+                <h3 class="chart-title">Rolling Window Statistics</h3>
+                <div class="table-wrapper">
+                    <table id="rollingStatsTable">
+                        <thead>
+                            <tr>
+                                <th>Window</th>
+                                <th>CAGR</th>
+                                <th>Max DD</th>
+                                <th>Sharpe</th>
+                                <th>Win Rate</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rollingStatsBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Right Sidebar: Save/Load -->
+        <aside id="sidebar-right" class="sidebar">
+            <div class="sidebar-section">
+                <h2 class="section-title">
+                    <span class="icon">💾</span> Save
+                </h2>
+                <div class="save-controls">
+                    <input type="text" id="saveName" placeholder="Configuration name..." />
+                    <div class="save-buttons">
+                        <button class="btn btn-accent" onclick="saveFactorConfig()">Save Factors</button>
+                        <button class="btn btn-secondary" onclick="saveStrategy()">Save Strategy</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h2 class="section-title">
+                    <span class="icon">📂</span> Saved Factors
+                </h2>
+                <div id="savedFactorsList" class="saved-list">
+                    <p class="empty-state">No saved factor configs</p>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h2 class="section-title">
+                    <span class="icon">🎯</span> Saved Strategies
+                </h2>
+                <div id="savedStrategiesList" class="saved-list">
+                    <p class="empty-state">No saved strategies</p>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
