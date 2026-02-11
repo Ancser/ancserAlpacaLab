@@ -182,6 +182,11 @@ body {
     min-height: calc(100vh - 66px);
 }
 
+#content-center {
+    min-width: 0;
+    overflow: hidden;
+}
+
 /* ==========================================
    Sidebars
    ========================================== */
@@ -970,4 +975,210 @@ tr:hover td {
     .stats-grid {
         grid-template-columns: 1fr;
     }
+}
+
+/* ==========================================
+   Trade Summary
+   ========================================== */
+
+.trade-summary-container {
+    margin-top: 20px;
+    max-width: 100%;
+    overflow: hidden;
+}
+
+.trade-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+.summary-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+}
+
+.summary-card h4 {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.summary-stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 3px 0;
+    font-size: 0.82rem;
+}
+
+.summary-stat-row .label {
+    color: var(--text-secondary);
+}
+
+.summary-stat-row .value {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.summary-stat-row .value.positive {
+    color: var(--accent-green);
+}
+
+.summary-stat-row .value.negative {
+    color: var(--accent-red);
+}
+
+.trade-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    font-size: 0.8rem;
+    border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.trade-item:last-child {
+    border-bottom: none;
+}
+
+.trade-item .ticker {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: var(--text-primary);
+    min-width: 50px;
+}
+
+.trade-item .return {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    text-align: right;
+}
+
+.trade-item .return.positive {
+    color: var(--accent-green);
+}
+
+.trade-item .return.negative {
+    color: var(--accent-red);
+}
+
+.trade-item .period-label {
+    font-size: 0.68rem;
+    color: var(--text-secondary);
+    margin-left: 8px;
+    white-space: nowrap;
+}
+
+/* ==========================================
+   Holdings History (per-period cards)
+   ========================================== */
+
+.holdings-history-container {
+    margin-top: 20px;
+    max-width: 100%;
+    overflow: hidden;
+}
+
+.period-count {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-weight: 400;
+    margin-left: 6px;
+}
+
+.holdings-scroll {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+}
+
+.holdings-scroll::-webkit-scrollbar {
+    height: 6px;
+}
+
+.holdings-scroll::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+    border-radius: 3px;
+}
+
+.holdings-scroll::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+}
+
+.period-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    min-width: 200px;
+    max-width: 240px;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.period-card.most-recent {
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 12px rgba(0, 212, 255, 0.15);
+}
+
+.period-card-header {
+    padding: 10px 14px;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.period-card.most-recent .period-card-header {
+    color: var(--accent-cyan);
+    background: rgba(0, 212, 255, 0.06);
+}
+
+.period-card-body {
+    padding: 6px 14px 10px;
+}
+
+.holding-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    font-size: 0.8rem;
+    border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.holding-row:last-child {
+    border-bottom: none;
+}
+
+.holding-row .ticker {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.holding-row .return {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    text-align: right;
+}
+
+.holding-row .return.positive {
+    color: var(--accent-green);
+}
+
+.holding-row .return.negative {
+    color: var(--accent-red);
 }

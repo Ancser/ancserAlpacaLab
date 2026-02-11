@@ -270,6 +270,9 @@ def _run_backtest_with_config(factor_config, rebalance_rule, years, top_n,
     w_prev = pd.Series(0.0, index=close_stocks.columns)
     port_ret = pd.Series(0.0, index=dates)
 
+    # --- Track per-period holdings ---
+    rebal_log = []  # list of (rebal_date, picks_list)
+
     for i in range(1, len(dates)):
         dt = dates[i]
         sig_dt = dates[i - 1]
@@ -278,6 +281,7 @@ def _run_backtest_with_config(factor_config, rebalance_rule, years, top_n,
         if dt in rebal_dates:
             if not risk_on.get(sig_dt, True) and regime_cfg.get('risk_off_mode') == 'defensive':
                 w_tgt[:] = 0.0
+                rebal_log.append((dt, []))
             else:
                 mask = eligible.loc[sig_dt] if sig_dt in eligible.index else pd.Series(True, index=close_stocks.columns)
                 scores = score.loc[sig_dt].where(mask).dropna() if sig_dt in score.index else pd.Series(dtype=float)
@@ -295,8 +299,12 @@ def _run_backtest_with_config(factor_config, rebalance_rule, years, top_n,
                         total = w_tgt.sum()
                         if total > 0:
                             w_tgt = w_tgt / total
+                        rebal_log.append((dt, picks[:]))
+                    else:
+                        rebal_log.append((dt, []))
                 else:
                     w_tgt[:] = 0.0
+                    rebal_log.append((dt, []))
 
         turn = 0.5 * float(np.abs(w_tgt - w_prev).sum())
         cost = turn * (costs_cfg['total_bps'] / 10000.0)
@@ -324,6 +332,10 @@ def _run_backtest_with_config(factor_config, rebalance_rule, years, top_n,
     eq_spy = (1 + ret_spy).cumprod()
     eq_qqq = (1 + ret_qqq).cumprod()
 
+    # --- Compute per-period holdings returns ---
+    holdings_history = _compute_holdings_history(rebal_log, close_stocks, start_date)
+    trade_summary = _compute_trade_summary(holdings_history)
+
     return {
         'strategy': _equity_to_json(eq_strategy),
         'spy': _equity_to_json(eq_spy),
@@ -332,7 +344,109 @@ def _run_backtest_with_config(factor_config, rebalance_rule, years, top_n,
             'strategy': _compute_stats(eq_strategy, port_ret),
             'spy': _compute_stats(eq_spy, ret_spy),
             'qqq': _compute_stats(eq_qqq, ret_qqq),
-        }
+        },
+        'holdings_history': holdings_history,
+        'trade_summary': trade_summary,
+    }
+
+
+def _compute_holdings_history(rebal_log, close_stocks, start_date):
+    """
+    Compute per-period holdings with their returns.
+    Returns a list of periods (most recent first), each with:
+      - label: date range string
+      - holdings: list of {ticker, return_pct} sorted best-to-worst
+    """
+    if not rebal_log:
+        return []
+
+    # Filter to only rebalances after actual start_date
+    if start_date:
+        actual_start = pd.Timestamp(start_date)
+        rebal_log = [(dt, picks) for dt, picks in rebal_log if pd.Timestamp(dt) >= actual_start]
+
+    if not rebal_log:
+        return []
+
+    periods = []
+    for idx in range(len(rebal_log)):
+        dt, picks = rebal_log[idx]
+        if not picks:
+            continue
+
+        # Determine end of this holding period
+        if idx + 1 < len(rebal_log):
+            next_dt = rebal_log[idx + 1][0]
+        else:
+            # Last rebalance — use the last available date
+            next_dt = close_stocks.index[-1]
+
+        # Compute per-stock return during this holding period
+        holdings = []
+        for ticker in picks:
+            if ticker not in close_stocks.columns:
+                continue
+            try:
+                price_start = close_stocks.loc[dt, ticker] if dt in close_stocks.index else None
+                price_end = close_stocks.loc[next_dt, ticker] if next_dt in close_stocks.index else None
+                if price_start and price_end and price_start > 0:
+                    ret = (price_end / price_start - 1)
+                    holdings.append({'ticker': ticker, 'return_pct': round(ret * 100, 2)})
+                else:
+                    holdings.append({'ticker': ticker, 'return_pct': 0.0})
+            except Exception:
+                holdings.append({'ticker': ticker, 'return_pct': 0.0})
+
+        # Sort by return descending (best first)
+        holdings.sort(key=lambda h: h['return_pct'], reverse=True)
+
+        dt_str = pd.Timestamp(dt).strftime('%Y-%m-%d')
+        next_str = pd.Timestamp(next_dt).strftime('%Y-%m-%d')
+        periods.append({
+            'label': f"{dt_str} ~ {next_str}",
+            'date': dt_str,
+            'holdings': holdings,
+        })
+
+    # Most recent first
+    periods.reverse()
+    return periods
+
+
+def _compute_trade_summary(holdings_history):
+    """
+    Aggregate all trades across all periods into a summary:
+      - top_gainers: top 5 best individual trades
+      - top_losers: top 5 worst individual trades
+      - total_ops: total number of stock-period entries
+      - total_periods: number of rebalance periods
+      - win_count / loss_count
+    """
+    all_trades = []
+    for period in holdings_history:
+        for h in period.get('holdings', []):
+            all_trades.append({
+                'ticker': h['ticker'],
+                'return_pct': h['return_pct'],
+                'period': period['label'],
+            })
+
+    if not all_trades:
+        return {'top_gainers': [], 'top_losers': [], 'total_ops': 0,
+                'total_periods': 0, 'win_count': 0, 'loss_count': 0, 'win_rate': 0}
+
+    sorted_trades = sorted(all_trades, key=lambda t: t['return_pct'], reverse=True)
+    win_count = sum(1 for t in all_trades if t['return_pct'] > 0)
+    loss_count = sum(1 for t in all_trades if t['return_pct'] <= 0)
+
+    return {
+        'top_gainers': sorted_trades[:5],
+        'top_losers': sorted_trades[-5:][::-1],  # worst first
+        'total_ops': len(all_trades),
+        'total_periods': len(holdings_history),
+        'win_count': win_count,
+        'loss_count': loss_count,
+        'win_rate': round(win_count / len(all_trades) * 100, 1) if all_trades else 0,
     }
 
 

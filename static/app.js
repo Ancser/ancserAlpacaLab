@@ -324,6 +324,8 @@ async function runBacktest() {
 
         renderFullChart(data.data);
         renderStats(data.data.stats);
+        renderTradeSummary(data.data.trade_summary);
+        renderHoldingsHistory(data.data.holdings_history);
         showToast('Backtest completed successfully!', 'success');
 
         // Run rolling if enabled
@@ -735,6 +737,93 @@ async function deleteSaved(name, type) {
     } catch (e) {
         showToast('Delete failed: ' + e.message, 'error');
     }
+}
+
+// ==========================================
+// Trade Summary & Holdings History
+// ==========================================
+
+function renderTradeSummary(summary) {
+    const container = document.getElementById('tradeSummaryContainer');
+    const grid = document.getElementById('tradeSummaryGrid');
+    if (!summary || summary.total_ops === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    container.style.display = '';
+
+    const fmtRet = (v) => {
+        const sign = v >= 0 ? '+' : '';
+        const cls = v >= 0 ? 'positive' : 'negative';
+        return `<span class="return ${cls}">${sign}${v.toFixed(2)}%</span>`;
+    };
+
+    const tradeList = (trades) => trades.map(t =>
+        `<div class="trade-item">
+            <span class="ticker">${t.ticker}</span>
+            ${fmtRet(t.return_pct)}
+            <span class="period-label">${t.period.split(' ~ ')[0]}</span>
+        </div>`
+    ).join('');
+
+    grid.innerHTML = `
+        <div class="summary-card">
+            <h4>Overview</h4>
+            <div class="summary-stat-row">
+                <span class="label">Total Trades</span>
+                <span class="value">${summary.total_ops}</span>
+            </div>
+            <div class="summary-stat-row">
+                <span class="label">Periods</span>
+                <span class="value">${summary.total_periods}</span>
+            </div>
+            <div class="summary-stat-row">
+                <span class="label">Win Rate</span>
+                <span class="value ${summary.win_rate >= 50 ? 'positive' : 'negative'}">${summary.win_rate}%</span>
+            </div>
+            <div class="summary-stat-row">
+                <span class="label">Wins / Losses</span>
+                <span class="value"><span class="positive">${summary.win_count}</span> / <span class="negative">${summary.loss_count}</span></span>
+            </div>
+        </div>
+        <div class="summary-card">
+            <h4>🏆 Top Gainers</h4>
+            ${tradeList(summary.top_gainers)}
+        </div>
+        <div class="summary-card">
+            <h4>📉 Top Losers</h4>
+            ${tradeList(summary.top_losers)}
+        </div>
+    `;
+}
+
+function renderHoldingsHistory(periods) {
+    const container = document.getElementById('holdingsHistoryContainer');
+    const scroll = document.getElementById('holdingsScroll');
+    const countEl = document.getElementById('periodCount');
+    if (!periods || periods.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    container.style.display = '';
+    countEl.textContent = `(${periods.length} periods)`;
+
+    scroll.innerHTML = periods.map((period, idx) => {
+        const isRecent = idx === 0;
+        const rows = period.holdings.map(h => {
+            const sign = h.return_pct >= 0 ? '+' : '';
+            const cls = h.return_pct >= 0 ? 'positive' : 'negative';
+            return `<div class="holding-row">
+                <span class="ticker">${h.ticker}</span>
+                <span class="return ${cls}">${sign}${h.return_pct.toFixed(2)}%</span>
+            </div>`;
+        }).join('');
+
+        return `<div class="period-card ${isRecent ? 'most-recent' : ''}">
+            <div class="period-card-header">${isRecent ? '★ ' : ''}${period.label}</div>
+            <div class="period-card-body">${rows}</div>
+        </div>`;
+    }).join('');
 }
 
 
