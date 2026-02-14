@@ -1,4 +1,4 @@
-# Project Titan
+# Ancser Alpaca Lab
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
 [![Polars](https://img.shields.io/badge/Polars-Fast-orange)](https://pola.rs/)
