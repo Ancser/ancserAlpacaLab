@@ -96,5 +96,59 @@
       }
     },
     "saved_at": "2026-02-09T23:18:16.137761"
+  },
+  "hhh": {
+    "config": {
+      "graham": {
+        "enabled": true,
+        "weight": 0.11,
+        "cache_days": 7
+      },
+      "kdj": {
+        "enabled": true,
+        "weight": 0.11,
+        "period": 9,
+        "signal": 3
+      },
+      "momentum_12_1": {
+        "enabled": true,
+        "weight": 0.11,
+        "lookback": 252,
+        "skip": 21
+      },
+      "pmo": {
+        "enabled": true,
+        "weight": 0.11,
+        "first_length": 100,
+        "second_length": 50
+      },
+      "pullback_5d": {
+        "enabled": true,
+        "weight": 0.11,
+        "lookback": 5
+      },
+      "rsi": {
+        "enabled": true,
+        "weight": 0.11,
+        "period": 14
+      },
+      "trend_strength": {
+        "enabled": true,
+        "weight": 0.11,
+        "long": 50,
+        "short": 20
+      },
+      "volatility": {
+        "enabled": true,
+        "weight": 0.11,
+        "period": 20
+      },
+      "volume_surge": {
+        "enabled": true,
+        "weight": 0.11,
+        "period": 20
+      }
+    },
+    "saved_at": "2026-02-13T15:09:05.893336"
   }
 }

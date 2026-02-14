@@ -88,7 +88,10 @@
 
                     <!-- Active Strategy / MWU -->
                     <div class="account-card strategy-info-card">
-                        <div class="card-label">Active Strategy</div>
+                        <div class="card-label">Strategy Composition</div>
+                        <div style="height: 180px; position: relative; margin-bottom: 12px;">
+                            <canvas id="factorWeightsChart"></canvas>
+                        </div>
                         <div id="activeStrategyDisplay" class="strategy-display">
                             <p class="text-muted">Loading...</p>
                         </div>
@@ -295,6 +298,14 @@
                         <div class="chart-placeholder" id="fullChartPlaceholder">
                             <div class="placeholder-icon">📈</div>
                             <p>Configure factors and click <strong>Run Backtest</strong></p>
+                        </div>
+                    </div>
+
+                    <!-- Factor Allocation History Chart -->
+                    <div class="chart-container" id="historyWeightContainer" style="display:none;">
+                        <h3 class="chart-title">Factor Allocation History</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="historyWeightChart"></canvas>
                         </div>
                     </div>
 

@@ -6,9 +6,12 @@
 // State
 // ==========================================
 
-let factorInfo = {};
+let factors = {};
 let fullChart = null;
-let rollingChart = null;
+
+
+let factorWeightsChart = null;
+let historyWeightChart = null;
 
 // Chart color palette
 const COLORS = {
@@ -231,21 +234,76 @@ function updateActiveStrategy(cfg) {
     if (cfg.error) return;
     const div = document.getElementById('activeStrategyDisplay');
 
-    let html = '';
-    // Factors
-    const enabledFactors = [];
+    // Process Factors
+    const labels = [];
+    const data = [];
+    const colors = [];
+
     if (cfg.factors) {
-        for (const [k, v] of Object.entries(cfg.factors)) {
+        const factorEntries = Object.entries(cfg.factors);
+        let colorIdx = 0;
+        const palette = [
+            '#58a6ff', '#3fb950', '#d29922', '#bc8cff', '#f778ba',
+            '#6bc46d', '#ff7b72', '#79c0ff', '#d2a8ff', '#ffa657'
+        ];
+
+        for (const [k, v] of factorEntries) {
             if (v.enabled) {
-                enabledFactors.push(`${k} (${v.weight.toFixed(2)})`);
+                labels.push(k);
+                data.push(v.weight);
+                colors.push(palette[colorIdx % palette.length]);
+                colorIdx++;
             }
         }
     }
 
-    html += `<div><strong>Factors:</strong> ${enabledFactors.join(', ') || 'None'}</div>`;
-    html += `<div><strong>Top N:</strong> ${cfg.portfolio?.top_n || 10}</div>`;
-
+    // Update Text Display
+    let html = `<div><strong>Top N:</strong> ${cfg.portfolio?.top_n || 10}</div>`;
+    // html += `<div><strong>Factors:</strong> ${labels.join(', ') || 'None'}</div>`; 
     div.innerHTML = html;
+
+    // Render / Update Chart
+    const ctx = document.getElementById('factorWeightsChart');
+    if (!ctx) return;
+
+    if (factorWeightsChart) {
+        factorWeightsChart.data.labels = labels;
+        factorWeightsChart.data.datasets[0].data = data;
+        factorWeightsChart.data.datasets[0].backgroundColor = colors;
+        factorWeightsChart.update();
+    } else {
+        factorWeightsChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: colors,
+                    borderColor: 'rgba(22, 27, 34, 0.8)',
+                    borderWidth: 2,
+                    hoverOffset: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: { color: '#8b949e', font: { size: 10 }, boxWidth: 12 }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function (context) {
+                                return ` ${context.label}: ${context.raw.toFixed(2)}`;
+                            }
+                        }
+                    }
+                },
+                cutout: '65%'
+            }
+        });
+    }
 }
 
 function updateLiveChart(hist) {
@@ -544,8 +602,9 @@ async function runBacktest() {
             throw new Error(data.message);
         }
 
-        renderFullChart(data.data);
-        renderStats(data.data.stats);
+
+
+        renderHistoryWeightChart(data.data.factor_weights);
         renderTradeSummary(data.data.trade_summary);
         renderHoldingsHistory(data.data.holdings_history);
         showToast('Backtest completed successfully!', 'success');
@@ -1137,4 +1196,85 @@ function showToast(message, type = 'info') {
         toast.style.transition = 'all 0.3s';
         setTimeout(() => toast.remove(), 300);
     }, 4000);
+}
+
+function renderHistoryWeightChart(weightsData) {
+    const container = document.getElementById('historyWeightContainer');
+    if (!weightsData || Object.keys(weightsData).length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    container.style.display = 'block';
+
+    const dates = Object.keys(weightsData).sort();
+    if (dates.length === 0) return;
+
+    // Identify factors from the first entry
+    const firstDate = dates[0];
+    const factors = Object.keys(weightsData[firstDate]);
+
+    // Color palette for factors from activeStrategyDisplay logic
+    const palette = [
+        '#58a6ff', '#3fb950', '#d29922', '#bc8cff', '#f778ba',
+        '#6bc46d', '#ff7b72', '#79c0ff', '#d2a8ff', '#ffa657'
+    ];
+
+    const datasets = factors.map((fname, idx) => {
+        const data = dates.map(d => weightsData[d][fname] || 0);
+        const color = palette[idx % palette.length];
+        return {
+            label: fname,
+            data: data,
+            borderColor: color,
+            backgroundColor: color + '33', // 20% opacity
+            fill: true,
+            borderWidth: 1,
+            pointRadius: 0,
+            tension: 0.1
+        };
+    });
+
+    if (historyWeightChart) historyWeightChart.destroy();
+
+    const ctx = document.getElementById('historyWeightChart').getContext('2d');
+    historyWeightChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: dates,
+            datasets: datasets
+        },
+        options: {
+            ...CHART_DEFAULTS,
+            interaction: {
+                mode: 'nearest',
+                axis: 'x',
+                intersect: false
+            },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: { unit: 'month', tooltipFormat: 'yyyy-MM-dd' },
+                    ticks: { color: '#6e7681', font: { size: 10 }, maxTicksLimit: 12 },
+                    grid: { color: 'rgba(48,54,61,0.5)', drawBorder: false }
+                },
+                y: {
+                    stacked: true,
+                    min: 0,
+                    max: 1.05,
+                    title: { display: true, text: 'Weight', color: '#6e7681', font: { size: 11 } },
+                    ticks: { color: '#6e7681', font: { family: 'JetBrains Mono', size: 10 } },
+                    grid: { color: 'rgba(48,54,61,0.5)', drawBorder: false }
+                }
+            },
+            plugins: {
+                ...CHART_DEFAULTS.plugins,
+                tooltip: {
+                    ...CHART_DEFAULTS.plugins.tooltip,
+                    callbacks: {
+                        label: ctx => `${ctx.dataset.label}: ${(ctx.raw * 100).toFixed(1)}%`
+                    }
+                }
+            }
+        }
+    });
 }

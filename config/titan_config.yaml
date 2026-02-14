@@ -1,0 +1,44 @@
+system:
+  name: "Project Titan"
+  version: "2.0"
+  timezone: "America/New_York"
+
+data:
+  store_path: "data/parquet"
+  universe:
+    mode: "custom" # or "sp500"
+    custom_tickers: ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "AMD", "SPY", "QQQ"]
+  
+  alpaca:
+    key_id_env: "APCA_API_KEY_ID"
+    secret_key_env: "APCA_API_SECRET_KEY"
+    endpoint: "https://paper-api.alpaca.markets" # Change for live
+
+strategy:
+  factors:
+    momentum_roc:
+      enabled: true
+      window: 252
+    reversion_rsi:
+      enabled: true
+      window: 14
+    skew:
+      enabled: true
+      window: 60
+    amihud:
+      enabled: true
+      window: 20
+  
+  mwu:
+    learning_rate: 0.1
+    window: 252
+
+execution:
+  risk:
+    max_position_pct: 0.10
+    max_leverage: 1.5
+    blacklist: []
+  
+  oms:
+    rebalance_interval_minutes: 60
+    slicer_chunks: 10 # TWAP chunks
