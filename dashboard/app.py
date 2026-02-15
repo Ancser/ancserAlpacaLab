@@ -132,8 +132,153 @@ elif page == "Backtest":
         leverage = c3.slider("Max Leverage", 1.0, 3.0, 1.0)
         use_mwu = c4.checkbox("Enable MWU (Dynamic Weighting)", value=True)
         
-        submitted = st.form_submit_button("Run Backtest")
+        col_btn1, col_btn2 = st.columns([1,2])
+        submitted = col_btn1.form_submit_button("Run Backtest")
+        run_combo = col_btn2.form_submit_button("Run Factor Combinatorial Search (Loop All)")
         
+        if run_combo:
+            st.info("Starting Combinatorial Search... This may take a minute.")
+            import itertools
+            from titan_core.backtest import BacktestEngine
+            from titan_core.data.yahoo_adapter import YahooAdapter
+            
+            # 1. Fetch & Prepare Data ONCE
+            progress = st.progress(0)
+            engine = BacktestEngine(initial_capital=100000.0)
+            s_str = start_date.strftime('%Y-%m-%d')
+            e_str = end_date.strftime('%Y-%m-%d')
+            
+            with st.spinner("Fetching data and computing factors..."):
+                data = engine.fetch_and_prepare_data(universe, s_str, e_str)
+                
+            if data is None or data.empty:
+                st.error("No data available.")
+                st.stop()
+                
+            # 2. Generate Combinations
+            # Min 1 factor, max 6
+            combos = []
+            for r in range(1, len(all_factors) + 1):
+                combos.extend(itertools.combinations(all_factors, r))
+            
+            st.write(f"Testing {len(combos)} combinations...")
+            
+            results_list = []
+            eq_curves = {}
+            
+            # Benchmarks
+            benchmarks = ['SPY', 'QQQ', 'GLD']
+            yahoo = YahooAdapter()
+            bench_df_lazy = yahoo.fetch_history(benchmarks, s_str, e_str)
+            bench_df = bench_df_lazy.collect().to_pandas()
+            
+            # 3. Loop
+            total_steps = len(combos)
+            
+            for idx, combo in enumerate(combos):
+                combo_name = " + ".join(combo)
+                # Run Simulation
+                res, _ = engine.run_simulation(data, list(combo), leverage, use_mwu)
+                
+                if not res.empty:
+                    eq = res['equity']
+                    start_eq = eq.iloc[0]
+                    end_eq = eq.iloc[-1]
+                    
+                    # Metrics
+                    duration = (pd.to_datetime(e_str) - pd.to_datetime(s_str)).days / 365.25
+                    cagr = (end_eq / start_eq) ** (1/duration) - 1 if duration > 0 else 0
+                    
+                    rmax = eq.cummax()
+                    dd = (eq - rmax) / rmax
+                    mdd = dd.min()
+                    
+                    calmar = cagr / abs(mdd) if mdd < 0 else 0
+                    
+                    daily_ret = eq.pct_change().dropna()
+                    sharpe = (daily_ret.mean() / daily_ret.std()) * (252**0.5) if daily_ret.std() > 0 else 0
+                    
+                    results_list.append({
+                        'Combination': combo_name,
+                        'Factors': len(combo),
+                        'Final Equity': end_eq,
+                        'CAGR': cagr,
+                        'Sharpe': sharpe,
+                        'MDD': mdd,
+                        'Calmar': calmar
+                    })
+                    
+                    # Store curve for later plotting
+                    eq_curves[combo_name] = eq
+                
+                progress.progress((idx + 1) / total_steps)
+            
+            # 4. Rank Results
+            rank_df = pd.DataFrame(results_list)
+            if not rank_df.empty:
+                rank_df = rank_df.sort_values('Calmar', ascending=False).reset_index(drop=True)
+                rank_df.index += 1 # 1-based rank
+                
+                st.subheader("Top Combinations (Ranked by Calmar)")
+                st.dataframe(rank_df.style.format({
+                    'Final Equity': "${:,.2f}",
+                    'CAGR': "{:.2%}",
+                    'Sharpe': "{:.2f}",
+                    'MDD': "{:.2%}",
+                    'Calmar': "{:.2f}"
+                }))
+                
+                # 5. Plot Top N + Benchmarks
+                st.subheader("Equity Curves: Top 5 Combinations vs Benchmarks")
+                fig_combo = go.Figure()
+                
+                # Add Top 5
+                top_5 = rank_df.head(5)['Combination'].tolist()
+                colors_list = ['#00CC96', '#EF553B', '#AB63FA', '#FFA15A', '#19D3F3']
+                
+                for i, name in enumerate(top_5):
+                    if name in eq_curves:
+                        fig_combo.add_trace(go.Scatter(
+                            x=eq_curves[name].index,
+                            y=eq_curves[name],
+                            mode='lines',
+                            name=f"#{i+1}: {name}",
+                            line=dict(width=2, color=colors_list[i % len(colors_list)])
+                        ))
+                
+                # Add Benchmarks
+                if not bench_df.empty:
+                    bench_df['timestamp'] = pd.to_datetime(bench_df['timestamp'])
+                    pivot_bench = bench_df.pivot(index='timestamp', columns='symbol', values='close')
+                    pivot_bench = pivot_bench.reindex(eq_curves[top_5[0]].index, method='ffill')
+                    
+                    b_colors = {'SPY': 'gray', 'QQQ': 'silver', 'GLD': 'gold'}
+                    for b in benchmarks:
+                        if b in pivot_bench:
+                             # Normalize to Strategy Initial Capital
+                            b_start = pivot_bench[b].iloc[0]
+                            if b_start > 0:
+                                b_norm = (pivot_bench[b] / b_start) * 100000.0
+                                fig_combo.add_trace(go.Scatter(
+                                    x=b_norm.index,
+                                    y=b_norm,
+                                    mode='lines',
+                                    name=b,
+                                    line=dict(color=b_colors.get(b, 'gray'), width=1, dash='dot')
+                                ))
+
+                fig_combo.update_layout(
+                    title="Best Combinations vs Benchmarks",
+                    xaxis_title="Date",
+                    yaxis_title="Equity",
+                    hovermode="x unified",
+                     yaxis=dict(rangemode='nonnegative')
+                )
+                st.plotly_chart(fig_combo, use_container_width=True)
+                
+            else:
+                st.warning("No combinations produced valid results.")
+
         if submitted:
             st.info(f"Fetching data and running simulation...")
             
@@ -238,7 +383,115 @@ elif page == "Backtest":
                     m4.metric("Calmar", f"{calmar:.2f}", f"MDD: {max_dd:.2%}")
                     
                     st.subheader("Equity Curve vs Benchmarks")
-                    st.line_chart(chart_data)
+                    
+                    # Interactive Plotly Chart
+                    fig_eq = go.Figure()
+                    
+                    # Add Strategy
+                    fig_eq.add_trace(go.Scatter(
+                        x=chart_data.index, 
+                        y=chart_data['Strategy'], 
+                        mode='lines', 
+                        name='Strategy',
+                        line=dict(color='#00CC96', width=2)
+                    ))
+                    
+                    # Add Benchmarks
+                    colors = {'SPY': '#636EFA', 'QQQ': '#EF553B', 'GLD': '#FECB52'}
+                    for col in chart_data.columns:
+                        if col == 'Strategy': continue
+                        fig_eq.add_trace(go.Scatter(
+                            x=chart_data.index, 
+                            y=chart_data[col], 
+                            mode='lines', 
+                            name=col,
+                            line=dict(color=colors.get(col, '#AB63FA'), width=1)
+                        ))
+                        
+                    # Layout Constraints
+                    fig_eq.update_layout(
+                        yaxis=dict(
+                            rangemode='nonnegative', # Prevent negative Y
+                            autorange=True,
+                            fixedrange=False
+                        ),
+                        xaxis=dict(
+                            range=[chart_data.index[0], chart_data.index[-1]], # Set initial view
+                            constrain='domain' # Restrict panning? (Plotly doesn't strictly lock pan without config)
+                        ),
+                        hovermode='x unified',
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        margin=dict(l=0, r=0, t=30, b=0)
+                    )
+                    
+                    # config={'scrollZoom': True} to allow zoom, but maybe user wants to lock it?
+                    # "limit left/right out of bounds" -> typically means distinct range.
+                    
+                    st.plotly_chart(fig_eq, use_container_width=True)
+                    
+                    # --- Yearly Returns ---
+                    st.subheader("Yearly Returns")
+                    
+                    # Calculate Yearly Returns
+                    # Group by Year and compute return (End / Start - 1)
+                    yearly_groups = chart_data.groupby(chart_data.index.year)
+                    yearly_rets = {}
+                    
+                    for year, data in yearly_groups:
+                        start_vals = data.iloc[0]
+                        end_vals = data.iloc[-1]
+                        ret = (end_vals / start_vals) - 1
+                        yearly_rets[year] = ret
+                        
+                    yearly_df = pd.DataFrame(yearly_rets).T # Index is Year, Columns are Assets
+                    yearly_df.index.name = 'Year'
+                    
+                    st.subheader("Yearly Seasonality (Equity Curve Comparison)")
+                    
+                    fig_season = go.Figure()
+                    
+                    strat_series = chart_data['Strategy']
+                    years = strat_series.index.year.unique()
+                    
+                    # Color map for years (gradient or distinct)
+                    # changing years to string for legend
+                    
+                    for year in years:
+                        subset = strat_series[strat_series.index.year == year]
+                        if subset.empty: continue
+                        
+                        # Normalize to percentage return for that year
+                        # Start at 0%
+                        normalized = (subset / subset.iloc[0]) - 1
+                        
+                        # Create a unified timeline (year 2000 is a leap year, good for all dates)
+                        # We map all dates to year 2000 keeping month/day
+                        dates_2000 = subset.index.map(lambda d: d.replace(year=2000))
+                        
+                        fig_season.add_trace(go.Scatter(
+                            x=dates_2000,
+                            y=normalized,
+                            mode='lines',
+                            name=str(year),
+                            hovertemplate='%{x|%b %d}: %{y:.2%}'
+                        ))
+                    
+                    fig_season.update_layout(
+                        title='Strategy Annual Performance Overlay',
+                        xaxis_title='Date',
+                        yaxis_title='Cumulative Return (%)',
+                        yaxis_tickformat='.0%',
+                        xaxis_tickformat='%b %d', # Month Day format
+                        hovermode='x unified',
+                        shapes=[dict(type="line", xref="paper", yref="y", x0=0, y0=0, x1=1, y1=0, line=dict(color="gray", width=1, dash="dash"))]
+                    )
+                    
+                    st.plotly_chart(fig_season, use_container_width=True)
+                    
+                    # Yearly Returns Table
+                    st.caption("Yearly Performance Metrics")
+                    st.dataframe(yearly_df.style.format("{:.2%}"), use_container_width=True)
+
                     
                     if not weight_history.empty and use_mwu:
                         st.subheader("Dynamic Factor Allocations (MWU)")
