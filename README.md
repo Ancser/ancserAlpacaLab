@@ -19,7 +19,7 @@
 
 **ancserAlpacaLab** - Factors / Backtesting / Strategy / Execution
 
-Automated trading using Alpaca platform. Requires daily computer setup to run `daily_run.bat` script for order execution. Includes factor backtesting (not optimized) and order execution.Built with **Polars** high-performance data processing architecture and **Streamlit** interactive dashboard.
+Automated trading using Alpaca platform. Requires daily computer setup to run `daily_run.bat` script for order execution. Includes factor backtesting (not optimized) and order execution. Built with **Polars** high-performance data processing architecture and **Streamlit** interactive dashboard.
 
 Developed under supervision by Google Antigravity / Claude Code / ancser.
 
