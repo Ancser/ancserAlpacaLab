@@ -5,9 +5,13 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-red)](https://streamlit.io/)
 [![Alpaca](https://img.shields.io/badge/Alpaca-Trading-yellow)](https://alpaca.markets/)
 
-**High-Performance Quantitative Trading System (Institutional Grade)**
+**Quantitative Trading System**
 
+<<<<<<< HEAD
 [中文版本](#中文版本) | [English Version](#english-version)
+=======
+**量化交易系統**
+>>>>>>> 5e0200254be02d82caab601864d8fe25b54341fd
 
 ---
 
@@ -15,6 +19,7 @@
 
 ## Introduction
 
+<<<<<<< HEAD
 **ancserAlpacaLab** represents a complete architectural overhaul of the legacy system. It separates "Research (Brain)" from "Execution (Body)" and leverages **Polars** for lightning-fast data processing (10-50x faster than Pandas). The frontend is built with **Streamlit**, providing a modern, interactive dashboard for monitoring strategies and factors.
 
 ---
@@ -334,6 +339,11 @@ This software is for educational and research purposes only. Quantitative tradin
 
 **ancserAlpacaLab** 是對舊有系統的全面重構。它將「研究（大腦）」與「執行（手腳）」完全分離，並利用 **Polars** 進行極速數據處理（比 Pandas 快 10-50 倍）。前端採用 **Streamlit** 構建，提供現代化的交互式儀表板，用於監控策略和因子表現。
 
+=======
+**ancserAlpacaLab** 因子/回測/策略/執行
+使用Alpaca平臺自動交易，需要每天設置電腦開啓daily_run.bat脚本下單。包含因子回測（未最佳化）、訂單執行。
+由Google Antigravity / Claude Code / ancser監督聯合開發。
+>>>>>>> 5e0200254be02d82caab601864d8fe25b54341fd
 ---
 
 ## 核心功能
