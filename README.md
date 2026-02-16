@@ -14,7 +14,8 @@
 ## Introduction / 簡介
 
 **ancserAlpacaLab** 因子/回測/策略/執行
-
+使用Alpaca平臺自動交易，需要每天設置電腦開啓daily_run.bat脚本下單。包含因子回測（未最佳化）、訂單執行。
+由Google Antigravity / Claude Code / ancser監督聯合開發。
 ---
 
 ## Key Features / 核心功能
