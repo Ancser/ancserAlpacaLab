@@ -19,9 +19,7 @@
 
 **ancserAlpacaLab** - Factors / Backtesting / Strategy / Execution
 
-Automated trading using Alpaca platform. Requires daily computer setup to run `daily_run.bat` script for order execution. Includes factor backtesting (not optimized) and order execution.
-
-Built with **Polars** high-performance data processing architecture and **Streamlit** interactive dashboard.
+Automated trading using Alpaca platform. Requires daily computer setup to run `daily_run.bat` script for order execution. Includes factor backtesting (not optimized) and order execution.Built with **Polars** high-performance data processing architecture and **Streamlit** interactive dashboard.
 
 Developed under supervision by Google Antigravity / Claude Code / ancser.
 
@@ -284,9 +282,7 @@ This software is for educational and research purposes only. Quantitative tradin
 
 **ancserAlpacaLab** 因子/回測/策略/執行
 
-使用 Alpaca 平臺自動交易，需要每天設置電腦開啓 `daily_run.bat` 脚本下單。包含因子回測（未最佳化）、訂單執行。
-
-採用 **Polars** 高性能數據處理架構與 **Streamlit** 交互式儀表板。
+使用 Alpaca 平臺自動交易，需要每天設置電腦開啓 `daily_run.bat` 脚本下單。包含因子回測（未最佳化）、訂單執行。採用 **Polars** 高性能數據處理架構與 **Streamlit** 交互式儀表板。
 
 由 Google Antigravity / Claude Code / ancser 監督聯合開發。
 
