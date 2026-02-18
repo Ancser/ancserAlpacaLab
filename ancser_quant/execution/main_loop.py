@@ -1,4 +1,6 @@
 import logging
+import json
+import os
 import pandas as pd
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -13,6 +15,35 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 ch = logging.StreamHandler()
 ch.setFormatter(formatter)
 logger.addHandler(ch)
+
+DAILY_LOCK_PATH = "logs/daily_trade_lock.json"
+
+def _check_daily_lock() -> bool:
+    """
+    Returns True if today's trade has already been executed (locked).
+    Reads the lock file and compares date with today.
+    """
+    today = datetime.now().strftime('%Y-%m-%d')
+    if not os.path.exists(DAILY_LOCK_PATH):
+        return False
+    try:
+        with open(DAILY_LOCK_PATH, 'r') as f:
+            lock = json.load(f)
+        return lock.get('last_trade_date') == today
+    except Exception:
+        return False
+
+def _write_daily_lock():
+    """Write today's date to the lock file after a successful trade execution."""
+    os.makedirs(os.path.dirname(DAILY_LOCK_PATH), exist_ok=True)
+    today = datetime.now().strftime('%Y-%m-%d')
+    lock = {
+        'last_trade_date': today,
+        'executed_at': datetime.now().isoformat()
+    }
+    with open(DAILY_LOCK_PATH, 'w') as f:
+        json.dump(lock, f, indent=2)
+    logger.info(f"Daily trade lock written for {today}.")
 
 class TitanEventLoop:
     """
@@ -43,10 +74,14 @@ class TitanEventLoop:
         Responsible for initiating the Factor Pipeline and Rebalancing Logic.
         """
         logger.info("Checking for rebalance opportunity...")
-        
+
+        # Daily trade lock: only allow one execution per calendar day
+        if _check_daily_lock():
+            today = datetime.now().strftime('%Y-%m-%d')
+            logger.info(f"[DailyLock] Trade already executed today ({today}). Skipping rebalance.")
+            return
+
         # 1. Load Live Strategy Config
-        import json
-        import os
         config_path = "config/live_strategy.json"
         if not os.path.exists(config_path):
             logger.warning("No live strategy config found. Skipping.")
@@ -147,7 +182,10 @@ class TitanEventLoop:
             
             logger.info("Executing Rebalance Orders...")
             oms.generate_and_execute_orders(target_weights)
-            
+
+            # Write daily lock so restarts won't re-execute today
+            _write_daily_lock()
+
             logger.info("Rebalance Cycle Completed.")
             
         except Exception as e:
