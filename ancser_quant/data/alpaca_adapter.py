@@ -216,6 +216,17 @@ class AlpacaAdapter:
             print(f"[AlpacaAdapter] Submit Order Error: {e}")
             raise e
 
+    def get_latest_prices(self, symbols: List[str]) -> Dict[str, float]:
+        """Fetch latest trade price for a list of symbols."""
+        from alpaca.data.requests import StockLatestTradeRequest
+        try:
+            req = StockLatestTradeRequest(symbol_or_symbols=symbols)
+            trades = self.data_client.get_stock_latest_trade(req)
+            return {sym: float(trade.price) for sym, trade in trades.items()}
+        except Exception as e:
+            print(f"[AlpacaAdapter] Get Latest Prices Error: {e}")
+            return {}
+
     def cancel_all_orders(self):
         """Cancel all open orders."""
         try:
