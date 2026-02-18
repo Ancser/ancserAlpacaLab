@@ -72,18 +72,29 @@ class OrderManagementSystem:
                 continue
 
             # Calculate qty rounded to 2 decimal places
-            order_qty = round(abs(diff_val) / price, 2)
+            current_qty = current_qtys.get(sym, 0.0)
+            target_qty = round(target_val / price, 2) if target_val > 0 else 0.0
+
+            if diff_val < 0:
+                # SELL: if fully closing (target=0), use exact current qty to avoid
+                # fractional residual errors (e.g. have 12.3456 but round gives 12.35)
+                if target_pct == 0 and current_qty > 0:
+                    order_qty = current_qty  # exact close, no rounding
+                else:
+                    order_qty = round(abs(diff_val) / price, 2)
+                    # Cap at actual holding to prevent oversell of fractional shares
+                    order_qty = min(order_qty, current_qty)
+            else:
+                # BUY: straightforward
+                order_qty = round(abs(diff_val) / price, 2)
+
             if order_qty <= 0:
                 continue
 
-            # Calculate target qty and percentage of target this order represents
-            target_qty = round(target_val / price, 2) if target_val > 0 else 0.0
-            current_qty = current_qtys.get(sym, 0.0)
-
+            # Percentage of target position this order represents
             if target_qty > 0:
                 pct_of_target = (order_qty / target_qty) * 100
             elif current_qty > 0:
-                # Selling out of a position
                 pct_of_target = (order_qty / current_qty) * 100
             else:
                 pct_of_target = 100.0
