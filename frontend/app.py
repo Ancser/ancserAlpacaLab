@@ -744,7 +744,7 @@ elif page == "Backtest":
                             if not b_series.empty:
                                 b_start = b_series.iloc[0]
                                 if b_start > 0:
-                                    b_norm = (pivot_bench[b] / b_start) * 100000.0
+                                    b_norm = (pivot_bench[b] / b_start) * initial_capital
                                     fig_combo.add_trace(go.Scatter(
                                         x=b_norm.index,
                                         y=b_norm,
@@ -764,7 +764,7 @@ elif page == "Backtest":
                         if b in pivot_bench.columns:
                             b_series = pivot_bench[b].dropna()
                             if not b_series.empty:
-                                b_norm = (b_series / b_series.iloc[0]) * 100000.0
+                                b_norm = (b_series / b_series.iloc[0]) * initial_capital
                                 all_combo_values.extend(b_norm.values)
 
                 if all_combo_values:
