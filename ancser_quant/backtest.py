@@ -177,6 +177,15 @@ class BacktestEngine:
                 n_side = min(150, max(1, len(scores) // 2))
                 top_n    = scores.nlargest(n_side).index.tolist()
                 bottom_n = scores.nsmallest(n_side).index.tolist()
+            elif strategy_mode == 'top10_long':
+                # Long-only top 10
+                top_n    = scores.nlargest(10).index.tolist()
+                bottom_n = []
+            elif strategy_mode == 'top10_ls':
+                # Long top 10, short bottom 10
+                n_side = min(10, max(1, len(scores) // 2))
+                top_n    = scores.nlargest(n_side).index.tolist()
+                bottom_n = scores.nsmallest(n_side).index.tolist()
             else:
                 # Long-only top 5 (default)
                 top_n    = scores.nlargest(5).index.tolist()
@@ -208,7 +217,7 @@ class BacktestEngine:
                 current_scalar = leverage # Default or Warmup
 
             # 5. Calculate P&L (Next Day Return)
-            if strategy_mode == 'long_short':
+            if strategy_mode in ('long_short', 'top10_ls'):
                 long_ret  = today_df.loc[top_n,    'fwd_ret'].mean() if top_n    else 0.0
                 short_ret = today_df.loc[bottom_n, 'fwd_ret'].mean() if bottom_n else 0.0
                 raw_day_ret = (long_ret - short_ret) / 2  # market-neutral, 50/50 gross

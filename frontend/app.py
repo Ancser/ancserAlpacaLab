@@ -437,17 +437,27 @@ elif page == "Backtest":
         # Strategy Mode
         with col_strategy:
             st.markdown("**📐 Strategy**")
+            strategy_options = ["Top 5 Long Only", "Top 10 Long Only", "Top 10 L/S", "150L / 150S"]
             strategy_label = st.selectbox(
                 "Mode",
-                ["Top 5 Long Only", "150L / 150S"],
+                strategy_options,
                 index=0,
                 label_visibility="collapsed"
             )
-            strategy_mode = 'long_short' if strategy_label == "150L / 150S" else 'long_only'
-            if strategy_mode == 'long_short':
-                st.caption("Backtest only\n(paper acct)")
-            else:
-                st.caption("Long top 5\nstocks")
+            strategy_mode_map = {
+                "Top 5 Long Only":  'long_only',
+                "Top 10 Long Only": 'top10_long',
+                "Top 10 L/S":       'top10_ls',
+                "150L / 150S":      'long_short',
+            }
+            strategy_mode = strategy_mode_map[strategy_label]
+            captions = {
+                'long_only':  "Long top 5",
+                'top10_long': "Long top 10",
+                'top10_ls':   "L10/S10\n(backtest)",
+                'long_short': "L150/S150\n(backtest)",
+            }
+            st.caption(captions[strategy_mode])
 
         # === ROW 2: Action Buttons (Run + Combo only) ===
         st.markdown("---")
