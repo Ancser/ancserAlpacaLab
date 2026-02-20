@@ -56,39 +56,42 @@ class OrderManagementSystem:
         orders = []
 
         for sym in all_symbols:
-            current_val = current_holdings.get(sym, 0.0)
+            current_qty = current_qtys.get(sym, 0.0)
             target_pct = target_weights.get(sym, 0.0)
-            target_val = equity * target_pct
-
-            diff_val = target_val - current_val
-
-            # Threshold: Ignore trades < $10 to avoid noise/fees
-            if abs(diff_val) < 10.0:
-                continue
 
             price = current_prices.get(sym, 0.0)
             if price <= 0:
                 logger.warning(f"No valid price for {sym}, skipping order.")
                 continue
 
-            # Calculate qty rounded to 2 decimal places
-            order_qty = round(abs(diff_val) / price, 2)
-            if order_qty <= 0:
-                continue
-
-            # Calculate target qty and percentage of target this order represents
-            target_qty = round(target_val / price, 2) if target_val > 0 else 0.0
-            current_qty = current_qtys.get(sym, 0.0)
-
-            if target_qty > 0:
-                pct_of_target = (order_qty / target_qty) * 100
-            elif current_qty > 0:
-                # Selling out of a position
-                pct_of_target = (order_qty / current_qty) * 100
-            else:
+            if target_pct == 0.0:
+                # Full exit: sell entire actual qty directly — bypass $10 threshold
+                if current_qty <= 0:
+                    continue
+                order_qty = current_qty
+                side = 'sell'
+                target_qty = 0.0
                 pct_of_target = 100.0
+            else:
+                # Partial rebalance: work in qty-space to avoid market-value drift
+                target_qty = round((equity * target_pct) / price, 2)
+                diff_qty = round(target_qty - current_qty, 2)
 
-            side = 'buy' if diff_val > 0 else 'sell'
+                # Threshold: Ignore trades worth < $10 to avoid noise/fees
+                if abs(diff_qty) * price < 10.0:
+                    continue
+                if diff_qty == 0:
+                    continue
+
+                order_qty = abs(diff_qty)
+                side = 'buy' if diff_qty > 0 else 'sell'
+
+                if target_qty > 0:
+                    pct_of_target = (order_qty / target_qty) * 100
+                elif current_qty > 0:
+                    pct_of_target = (order_qty / current_qty) * 100
+                else:
+                    pct_of_target = 100.0
 
             orders.append({
                 'symbol': sym,
