@@ -157,12 +157,43 @@ def compute_all_factors(df: pl.LazyFrame) -> pl.LazyFrame:
         .otherwise(50.0)                     # drift regime时使用中性值（不参与选股）
         .alias("factor_rsi_filtered")
     ])
-    
+
+    # --- Unicorn Edge (Singha 2025) ---
+    # BASE = 0.7 * value(1/price, cross-sectional percentile)
+    #      + 0.3 * reversal(-10d return, cross-sectional z-score)
+    # EDGE = BASE * REGIME  (non-drift stocks zeroed out)
+
+    # Step 1: time-series components (per symbol)
+    df = df.with_columns([
+        (1.0 / pl.col("close")).alias("_ue_inv_price"),
+        (-(pl.col("close") / pl.col("close").shift(10).over("symbol") - 1.0)).alias("_ue_ret10d_neg"),
+    ])
+
+    # Step 2: cross-sectional normalization (per trading day, across all symbols)
+    df = df.with_columns([
+        # value: percentile rank of 1/price → [0, 1]
+        (pl.col("_ue_inv_price").rank().over("timestamp") /
+         pl.col("_ue_inv_price").count().over("timestamp")).alias("_ue_value_cs"),
+        # reversal: z-score of negated 10-day return
+        ((pl.col("_ue_ret10d_neg") - pl.col("_ue_ret10d_neg").mean().over("timestamp")) /
+         (pl.col("_ue_ret10d_neg").std().over("timestamp") + 1e-8)).alias("_ue_reversal_cs"),
+    ])
+
+    # Step 3: BASE composite
+    df = df.with_columns([
+        (0.7 * pl.col("_ue_value_cs") + 0.3 * pl.col("_ue_reversal_cs")).alias("_ue_base"),
+    ])
+
+    # Step 4: EDGE = BASE * REGIME  (non-drift → 0, excluded from selection)
+    df = df.with_columns([
+        (pl.col("_ue_base") * pl.col("in_drift_regime").cast(pl.Float64)).alias("factor_unicorn_edge"),
+    ])
+
     # Cross-sectional factors (needs window function over date)
-    # Note: Polars LazyFrame execution order matters. 
+    # Note: Polars LazyFrame execution order matters.
     # Window functions over 'timestamp' are expensive if data is partitioned by symbol.
     # Strategy: Compute TS factors first, then collect/repartition if needed, or use window function.
-    
+
     # For now, we return TS factors. CS ranking happens in the Strategy/Ensemble step.
-    
+
     return df

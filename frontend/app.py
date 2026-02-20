@@ -321,7 +321,7 @@ elif page == "Backtest":
     # Left: Manual Selection
     with factor_col_left:
         st.markdown("**Manual Selection**")
-        all_factors = ['Momentum', 'Reversion', 'Skew', 'Microstructure', 'Alpha 101', 'Volatility', 'Drift-Reversion']
+        all_factors = ['Momentum', 'Reversion', 'Skew', 'Microstructure', 'Alpha 101', 'Volatility', 'Drift-Reversion', 'Unicorn Edge']
 
         factors = st.multiselect(
             "Active Factors",
@@ -360,8 +360,8 @@ elif page == "Backtest":
     # === Configuration Form ===
     with st.form("backtest_config"):
 
-        # === ROW 1: Compact Configuration (5 columns) ===
-        col_capital, col_date, col_source, col_universe, col_risk = st.columns(5)
+        # === ROW 1: Compact Configuration (6 columns, each ~1/6 width) ===
+        col_capital, col_date, col_source, col_universe, col_risk, col_strategy = st.columns(6)
 
         # Initial Capital
         with col_capital:
@@ -434,6 +434,21 @@ elif page == "Backtest":
             use_vol_target = st.checkbox("Vol Targeting", value=True)
             vol_target = st.slider("Target Vol", 0.05, 1.0, 0.20, 0.05, label_visibility="collapsed")
 
+        # Strategy Mode
+        with col_strategy:
+            st.markdown("**📐 Strategy**")
+            strategy_label = st.selectbox(
+                "Mode",
+                ["Top 5 Long Only", "150L / 150S"],
+                index=0,
+                label_visibility="collapsed"
+            )
+            strategy_mode = 'long_short' if strategy_label == "150L / 150S" else 'long_only'
+            if strategy_mode == 'long_short':
+                st.caption("Backtest only\n(paper acct)")
+            else:
+                st.caption("Long top 5\nstocks")
+
         # === ROW 2: Action Buttons (Run + Combo only) ===
         st.markdown("---")
         col_btn1, col_btn2 = st.columns(2)
@@ -463,6 +478,7 @@ elif page == "Backtest":
             "use_mwu": use_mwu,
             "use_vol_target": use_vol_target,
             "vol_target": vol_target,
+            "strategy_mode": strategy_mode,
             "last_updated": datetime.now().isoformat()
         }
 
@@ -604,7 +620,7 @@ elif page == "Backtest":
                 c_name = " + ".join(combo)
                 # Run Simulation
                 try:
-                    res, _ = engine.run_simulation(data, list(combo), leverage, use_mwu, use_vol_target, vol_target)
+                    res, _, _ = engine.run_simulation(data, list(combo), leverage, use_mwu, use_vol_target, vol_target, strategy_mode=strategy_mode)
                     if res.empty:
                         return None
                         
@@ -814,7 +830,7 @@ elif page == "Backtest":
             progress.progress(10)
             
             # 1. Run Strategy Backtest
-            results, weight_history = engine.run(universe, s_str, e_str, factors, leverage, use_mwu, use_vol_target, vol_target)
+            results, weight_history, holdings_df = engine.run(universe, s_str, e_str, factors, leverage, use_mwu, use_vol_target, vol_target, strategy_mode=strategy_mode)
             
             progress.progress(50)
             
@@ -1023,6 +1039,37 @@ elif page == "Backtest":
 
                 st.plotly_chart(fig_eq, width="stretch", config=config)
                 
+                # --- Portfolio Holdings ---
+                st.subheader("Portfolio Holdings")
+                if not holdings_df.empty:
+                    # Format index as date string for cleaner display
+                    h_display = holdings_df.copy()
+                    h_display.index = pd.to_datetime(h_display.index).strftime('%Y-%m-%d')
+
+                    # Latest portfolio (most recent date)
+                    latest = h_display.iloc[-1]
+                    latest_date = h_display.index[-1]
+                    long_stocks = [s.strip() for s in str(latest.get('long', '')).split(',') if s.strip()]
+                    st.markdown(f"**Latest selection ({latest_date}):** " + "  ".join([f"`{s}`" for s in long_stocks]))
+                    if strategy_mode == 'long_short':
+                        short_stocks = [s.strip() for s in str(latest.get('short', '')).split(',') if s.strip()]
+                        st.markdown(f"**Short leg:** " + "  ".join([f"`{s}`" for s in short_stocks[:10]]) + (f" ...+{len(short_stocks)-10}" if len(short_stocks) > 10 else ""))
+
+                    # Portfolio rotation (days where long composition changed)
+                    if strategy_mode == 'long_only':
+                        changed_mask = h_display['long'] != h_display['long'].shift(1)
+                    else:
+                        changed_mask = (h_display['long'] != h_display['long'].shift(1)) | (h_display['short'] != h_display['short'].shift(1))
+                    rotation_df = h_display[changed_mask]
+
+                    with st.expander(f"Portfolio Rotation Log ({len(rotation_df)} changes)", expanded=True):
+                        cols_to_show = ['long'] if strategy_mode == 'long_only' else ['long', 'short']
+                        st.dataframe(rotation_df[cols_to_show].tail(50), width="stretch")
+
+                    with st.expander("Full Daily Holdings (last 252 trading days)", expanded=False):
+                        cols_to_show = ['long'] if strategy_mode == 'long_only' else ['long', 'short']
+                        st.dataframe(h_display[cols_to_show].tail(252), width="stretch")
+
                 # --- Yearly Returns ---
                 st.subheader("Yearly Returns")
 

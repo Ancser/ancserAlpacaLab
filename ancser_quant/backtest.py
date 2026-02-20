@@ -87,17 +87,20 @@ class BacktestEngine:
         pdf['timestamp'] = pd.to_datetime(pdf['timestamp'])
         return pdf
 
-    def run_simulation(self, 
-                       data: pd.DataFrame, 
-                       active_factors: List[str], 
+    def run_simulation(self,
+                       data: pd.DataFrame,
+                       active_factors: List[str],
                        leverage: float = 1.0,
                        use_mwu: bool = False,
                        use_vol_target: bool = True,
                        vol_target_pct: float = 0.20,
-                       vol_window: int = 20) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Run simulation on precomputed data."""
+                       vol_window: int = 20,
+                       strategy_mode: str = 'long_only') -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """Run simulation on precomputed data.
+        strategy_mode: 'long_only' (top 5) | 'long_short' (top 150 long, bottom 150 short, market-neutral)
+        """
         if data.empty:
-            return pd.DataFrame(), pd.DataFrame()
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
             
         # Map friendly names to internal columns
         col_map = {
@@ -107,7 +110,8 @@ class BacktestEngine:
             'Microstructure': 'factor_amihud',
             'Alpha 101': 'factor_alpha006',
             'Volatility': 'factor_ivol',
-            'Drift-Reversion': 'factor_rsi_filtered'
+            'Drift-Reversion': 'factor_rsi_filtered',
+            'Unicorn Edge': 'factor_unicorn_edge',
         }
         
         # Filter valid factors
@@ -115,7 +119,7 @@ class BacktestEngine:
         factor_cols = [col_map[f] for f in valid_factors]
         
         if not valid_factors:
-            return pd.DataFrame(), pd.DataFrame()
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
         
         dates = sorted(data['timestamp'].unique())
         
@@ -126,6 +130,7 @@ class BacktestEngine:
         # Simulation State
         equity = [self.initial_capital]
         weights_history = []
+        holdings_history = []
         
         # Volatility Targeting State
         daily_returns_buffer = [] # Store portfolio daily returns for vol calculation
@@ -166,9 +171,24 @@ class BacktestEngine:
                 rank = today_df[col].rank(ascending=ascending, pct=True)
                 scores += rank * current_weights[f]
             
-            # 3. Select Portfolio (Top 5)
-            top_n = scores.nlargest(5).index.tolist()
-            
+            # 3. Select Portfolio
+            if strategy_mode == 'long_short':
+                # Market-neutral: top 150 long, bottom 150 short
+                n_side = min(150, max(1, len(scores) // 2))
+                top_n    = scores.nlargest(n_side).index.tolist()
+                bottom_n = scores.nsmallest(n_side).index.tolist()
+            else:
+                # Long-only top 5 (default)
+                top_n    = scores.nlargest(5).index.tolist()
+                bottom_n = []
+
+            # Record holdings for this date
+            holdings_history.append({
+                'date': date,
+                'long': ', '.join(top_n),
+                'short': ', '.join(bottom_n) if bottom_n else ''
+            })
+
             # 4. Volatility Targeting Logic
             # We calculate vol based on *past* returns to set exposure for *today* (which affects tomorrow's P&L)
             if use_vol_target and len(daily_returns_buffer) >= vol_window:
@@ -176,7 +196,7 @@ class BacktestEngine:
                 recent_rets = np.array(daily_returns_buffer[-vol_window:])
                 # std of returns * sqrt(252)
                 realized_vol = np.std(recent_rets, ddof=1) * np.sqrt(252)
-                
+
                 if realized_vol > 0.001: # Avoid division by zero
                     # Scalar = Target / Realized
                     calculated_scalar = vol_target_pct / realized_vol
@@ -186,13 +206,15 @@ class BacktestEngine:
                     current_scalar = leverage # Vol is super low, max out
             else:
                 current_scalar = leverage # Default or Warmup
-            
+
             # 5. Calculate P&L (Next Day Return)
-            if not top_n:
-                raw_day_ret = 0.0
+            if strategy_mode == 'long_short':
+                long_ret  = today_df.loc[top_n,    'fwd_ret'].mean() if top_n    else 0.0
+                short_ret = today_df.loc[bottom_n, 'fwd_ret'].mean() if bottom_n else 0.0
+                raw_day_ret = (long_ret - short_ret) / 2  # market-neutral, 50/50 gross
             else:
-                raw_day_ret = today_df.loc[top_n, 'fwd_ret'].mean()
-                
+                raw_day_ret = today_df.loc[top_n, 'fwd_ret'].mean() if top_n else 0.0
+
             if np.isnan(raw_day_ret): raw_day_ret = 0.0
             
             # Apply Scalar (Leverage/De-leverage)
@@ -215,21 +237,23 @@ class BacktestEngine:
         # Result DataFrame
         res_df = pd.DataFrame({'date': dates, 'equity': equity})
         res_df.set_index('date', inplace=True)
-        
-        w_df = pd.DataFrame(weights_history).set_index('date')
-        
-        return res_df, w_df
 
-    def run(self, 
-            symbols: List[str], 
-            start_date: str, 
-            end_date: str, 
-            active_factors: List[str], 
+        w_df = pd.DataFrame(weights_history).set_index('date')
+        holdings_df = pd.DataFrame(holdings_history).set_index('date') if holdings_history else pd.DataFrame()
+
+        return res_df, w_df, holdings_df
+
+    def run(self,
+            symbols: List[str],
+            start_date: str,
+            end_date: str,
+            active_factors: List[str],
             leverage: float = 1.0,
             use_mwu: bool = False,
             use_vol_target: bool = True,
             vol_target_pct: float = 0.20,
-            vol_window: int = 20) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        
+            vol_window: int = 20,
+            strategy_mode: str = 'long_only') -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+
         data = self.fetch_and_prepare_data(symbols, start_date, end_date)
-        return self.run_simulation(data, active_factors, leverage, use_mwu, use_vol_target, vol_target_pct, vol_window)
+        return self.run_simulation(data, active_factors, leverage, use_mwu, use_vol_target, vol_target_pct, vol_window, strategy_mode)
