@@ -68,7 +68,7 @@ class TitanEventLoop:
         except Exception as e:
             logger.error(f"Heartbeat Failed: {e}")
 
-    def rebalance_check(self):
+    def rebalance_check(self, force: bool = False):
         """
         Runs every hour (during trading hours).
         Responsible for initiating the Factor Pipeline and Rebalancing Logic.
@@ -78,8 +78,11 @@ class TitanEventLoop:
         # Daily trade lock: only allow one execution per calendar day
         if _check_daily_lock():
             today = datetime.now().strftime('%Y-%m-%d')
-            logger.info(f"[DailyLock] Trade already executed today ({today}). Skipping rebalance.")
-            return
+            if force:
+                logger.warning(f"[DailyLock] Trade already executed today ({today}), but --force is set. Overriding lock.")
+            else:
+                logger.info(f"[DailyLock] Trade already executed today ({today}). Skipping rebalance.")
+                return
 
         # 1. Load Live Strategy Config
         config_path = "config/live_strategy.json"
@@ -245,7 +248,7 @@ def run_once(force: bool = False):
             return
 
     logger.info("Running Rebalance Logic...")
-    loop.rebalance_check()
+    loop.rebalance_check(force=force)
     logger.info("--- Daily Batch Execution Completed ---")
 
 if __name__ == "__main__":

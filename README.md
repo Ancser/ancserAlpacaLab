@@ -118,13 +118,19 @@ APCA_API_SECRET_KEY=your_secret_key
 
 ### 3. Daily Operation (Safe)
 
-Double-click **`daily_run.bat`**:
+**Step 1: Start the Dashboard (once, manually)**
 
-- Checks market hours (doesn't trade if closed)
-- Launches the Dashboard
-- Runs Execution Logic to rebalance portfolio
+Double-click **`start_dashboard.bat`** to launch the Streamlit dashboard in a background window. Keep it running all day — you only need to do this once per session.
 
-This is the **recommended** way for automated daily trading.
+**Step 2: Schedule the Trading Bot**
+
+Add **`daily_run.bat`** to Windows Task Scheduler (e.g., 6:30 AM on weekdays):
+
+- Checks market hours (skips if closed)
+- Runs the execution logic to rebalance the portfolio
+- Writes a daily lock so it cannot trade twice in the same day
+
+> **Important**: `daily_run.bat` no longer starts the dashboard. Keep the dashboard and the trading bot separate — if the bat file launches the dashboard on every scheduled run, you will end up with multiple Streamlit processes restarting throughout the day.
 
 ### 4. Force Execution (Manual)
 
@@ -133,6 +139,7 @@ This is the **recommended** way for automated daily trading.
 Double-click **`force_run.bat`**:
 
 - **Ignores market hours** (run anytime)
+- **Bypasses the daily lock** (re-runs even if already traded today)
 - **Cancels all open orders** first
 - **Forces a rebalance** to target weights immediately
 - Shows detailed console output with pause
@@ -151,7 +158,7 @@ Use force execution to manually update positions or fix stuck orders.
 
 **Step 1: Launch Dashboard**
 
-Open Dashboard (`daily_run.bat` or `streamlit run frontend/app.py`).
+Open Dashboard (`start_dashboard.bat` or `streamlit run frontend/app.py`).
 
 **Step 2: Navigate to Backtest**
 
@@ -247,8 +254,9 @@ ancserAlpacaLab/
 ├── logs/                       # Application Logs
 │
 ├── .env                        # Environment Variables (API Keys)
-├── daily_run.bat               # Daily Entry Point
-├── force_run.bat               # Force Execution Entry Point
+├── daily_run.bat               # Trading Bot Entry Point (Task Scheduler)
+├── force_run.bat               # Force Execution Entry Point (bypasses lock & market check)
+├── start_dashboard.bat         # Dashboard Entry Point (run once manually)
 ├── requirements.txt            # Python Dependencies
 ├── setup.bat                   # Setup Script
 └── README.md                   # Project Documentation
@@ -381,13 +389,19 @@ APCA_API_SECRET_KEY=your_secret_key
 
 ### 3. 日常操作（安全）
 
-雙擊 **`daily_run.bat`**：
+**步驟 1：啟動儀表板（手動，僅需一次）**
 
-- 檢查市場時段（收盤時不交易）
-- 啟動儀表板
+雙擊 **`start_dashboard.bat`** 在背景視窗啟動 Streamlit 儀表板。讓它整天運行——每次開機只需執行一次。
+
+**步驟 2：排程交易機器人**
+
+將 **`daily_run.bat`** 加入 Windows 工作排程器（例如，工作日早上 6:30）：
+
+- 檢查市場時段（收盤時不執行）
 - 運行執行邏輯以再平衡組合
+- 寫入每日鎖定，確保同一天不會重複交易
 
-這是**推薦**的自動化每日交易方式。
+> **重要**：`daily_run.bat` 不再啟動儀表板。請將儀表板與交易機器人分開管理——若每次排程執行都啟動儀表板，將導致一天內出現多個 Streamlit 程序不斷重啟。
 
 ### 4. 強制執行（手動）
 
@@ -396,6 +410,7 @@ APCA_API_SECRET_KEY=your_secret_key
 雙擊 **`force_run.bat`**：
 
 - **忽略市場時段**（隨時運行）
+- **跳過每日鎖定**（即使今天已交易過也可再次執行）
 - **首先取消所有未成交訂單**
 - **強制再平衡**至目標權重
 - 顯示詳細控制台輸出並暫停
@@ -414,7 +429,7 @@ APCA_API_SECRET_KEY=your_secret_key
 
 **步驟 1：啟動儀表板**
 
-打開儀表板（`daily_run.bat` 或 `streamlit run frontend/app.py`）。
+打開儀表板（`start_dashboard.bat` 或 `streamlit run frontend/app.py`）。
 
 **步驟 2：導航至回測**
 
@@ -510,8 +525,9 @@ ancserAlpacaLab/
 ├── logs/                       # 應用日誌
 │
 ├── .env                        # 環境變量（API 密鑰）
-├── daily_run.bat               # 每日運行入口
-├── force_run.bat               # 強制執行入口
+├── daily_run.bat               # 交易機器人入口（工作排程器使用）
+├── force_run.bat               # 強制執行入口（跳過鎖定與市場時間檢查）
+├── start_dashboard.bat         # 儀表板入口（手動執行一次）
 ├── requirements.txt            # Python 依賴
 ├── setup.bat                   # 環境設置腳本
 └── README.md                   # 項目說明
