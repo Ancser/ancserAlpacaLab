@@ -1,6 +1,12 @@
+import json
 import logging
+import os
 import pandas as pd
+from datetime import datetime
 from ancser_quant.data.alpaca_adapter import AlpacaAdapter
+
+REBALANCE_SNAPSHOT_PATH = "logs/last_rebalance.json"
+REBALANCE_HISTORY_PATH = "logs/rebalance_history.json"
 
 logger = logging.getLogger("AncserExecution")
 
@@ -146,5 +152,45 @@ class OrderManagementSystem:
                 executed_orders.append(order)
             except Exception as e:
                 logger.error(f"Failed to execute BUY {order['symbol']}: {e}")
+
+        # Save rebalance snapshot: prices at execution time for dashboard P&L tracking
+        try:
+            snapshot_positions = {}
+            for sym in all_symbols:
+                qty = current_qtys.get(sym, 0.0)
+                target_pct = target_weights.get(sym, 0.0)
+                # Use target qty if we just bought into it, else current qty
+                final_qty = round((equity * target_pct) / current_prices[sym], 2) if target_pct > 0 and sym in current_prices and current_prices[sym] > 0 else qty
+                if final_qty > 0 and sym in current_prices:
+                    snapshot_positions[sym] = {
+                        "entry_price": round(current_prices[sym], 4),
+                        "qty": final_qty,
+                        "value": round(current_prices[sym] * final_qty, 2)
+                    }
+            snapshot = {
+                "rebalance_date": datetime.now().strftime('%Y-%m-%d'),
+                "rebalance_time": datetime.now().isoformat(),
+                "positions": snapshot_positions
+            }
+            os.makedirs(os.path.dirname(REBALANCE_SNAPSHOT_PATH), exist_ok=True)
+            # Write latest snapshot
+            with open(REBALANCE_SNAPSHOT_PATH, 'w') as f:
+                json.dump(snapshot, f, indent=2)
+            # Append to history (load existing, append, save)
+            history = []
+            if os.path.exists(REBALANCE_HISTORY_PATH):
+                try:
+                    with open(REBALANCE_HISTORY_PATH, 'r') as f:
+                        history = json.load(f)
+                except Exception:
+                    history = []
+            # Avoid duplicate entries for the same date (overwrite same-day)
+            history = [h for h in history if h.get('rebalance_date') != snapshot['rebalance_date']]
+            history.append(snapshot)
+            with open(REBALANCE_HISTORY_PATH, 'w') as f:
+                json.dump(history, f, indent=2)
+            logger.info(f"Rebalance snapshot saved. History now has {len(history)} entries.")
+        except Exception as snap_e:
+            logger.warning(f"Failed to write rebalance snapshot: {snap_e}")
 
         return executed_orders

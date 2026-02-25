@@ -1,3 +1,4 @@
+import json
 import streamlit as st
 import polars as pl
 import pandas as pd
@@ -175,6 +176,74 @@ if page == "Dashboard":
     except Exception as e:
         st.error(f"Failed to load holdings: {e}")
 
+    st.subheader("P&L by Date")
+    try:
+        # Daily P&L from Alpaca portfolio history
+        port_hist = adapter.get_portfolio_history(period="1M")
+        daily_pl = {}
+        daily_pl_pct = {}
+        if not port_hist.empty and 'profit_loss' in port_hist.columns:
+            for ts, row in port_hist.iterrows():
+                d = ts.strftime('%Y-%m-%d') if hasattr(ts, 'strftime') else str(ts)[:10]
+                daily_pl[d] = float(row.get('profit_loss', 0) or 0)
+                daily_pl_pct[d] = float(row.get('profit_loss_pct', 0) or 0)
+
+        # Actual fills from Alpaca activities
+        activities = adapter.get_activities(limit=500)
+        fills_by_date = {}
+        for act in activities:
+            d = act['date']
+            fills_by_date.setdefault(d, []).append(act)
+
+        all_dates = sorted(set(daily_pl.keys()) | set(fills_by_date.keys()), reverse=True)
+
+        if all_dates:
+            rows = []
+            for d in all_dates:
+                pl = daily_pl.get(d, None)
+                pl_pct = daily_pl_pct.get(d, None)
+                fills = fills_by_date.get(d, [])
+
+                buys = [f"{f['symbol']} x{f['qty']:.0f}@${f['price']:.2f}" for f in fills if f['side'] == 'buy']
+                sells = [f"{f['symbol']} x{f['qty']:.0f}@${f['price']:.2f}" for f in fills if f['side'] == 'sell']
+
+                rows.append({
+                    "Date": d,
+                    "Buys": ", ".join(buys) if buys else "-",
+                    "Sells": ", ".join(sells) if sells else "-",
+                    "Day P&L ($)": pl,
+                    "Day P&L (%)": pl_pct * 100 if pl_pct is not None else None,
+                })
+
+            pl_df = pd.DataFrame(rows).set_index("Date")
+
+            def color_pl(val):
+                if pd.isna(val) or not isinstance(val, (int, float)):
+                    return ""
+                return f"color: {'#00CC88' if val >= 0 else '#FF4B4B'}"
+
+            styled = pl_df.style.format({
+                "Day P&L ($)": lambda v: f"${v:+,.2f}" if pd.notna(v) else "-",
+                "Day P&L (%)": lambda v: f"{v:+.2f}%" if pd.notna(v) else "-",
+            }).applymap(color_pl, subset=["Day P&L ($)", "Day P&L (%)"])
+
+            st.dataframe(styled, width="stretch")
+
+            # Summary
+            pl_series = pd.Series({r["Date"]: r["Day P&L ($)"] for r in rows}).dropna()
+            if len(pl_series) > 0:
+                wins = (pl_series > 0).sum()
+                losses = (pl_series <= 0).sum()
+                w1, w2, w3, w4 = st.columns(4)
+                w1.metric("Win Rate", f"{wins/len(pl_series)*100:.0f}%", f"{wins}W / {losses}L")
+                w2.metric("Avg Win", f"${pl_series[pl_series > 0].mean():+,.2f}" if wins > 0 else "$0")
+                w3.metric("Avg Loss", f"${pl_series[pl_series <= 0].mean():+,.2f}" if losses > 0 else "$0")
+                w4.metric("Total P&L", f"${pl_series.sum():+,.2f}")
+        else:
+            st.info("No trade history available yet.")
+    except Exception as e:
+        st.error(f"Failed to load P&L history: {e}")
+
     st.subheader("Recent Orders")
     try:
         orders = adapter.get_orders()
@@ -218,7 +287,6 @@ if page == "Dashboard":
     st.subheader("Live Strategy Configuration & Preview")
 
     # Load current live strategy config
-    import json
     config_path = "config/live_strategy.json"
 
     try:

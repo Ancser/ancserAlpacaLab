@@ -227,6 +227,37 @@ class AlpacaAdapter:
             print(f"[AlpacaAdapter] Get Latest Prices Error: {e}")
             return {}
 
+    def get_activities(self, limit: int = 200) -> List[Dict]:
+        """Fetch trade fill activities (actual executed trades) from Alpaca."""
+        try:
+            # Use raw REST endpoint — GetPortfolioActivitiesRequest not available in alpaca-py 0.43.x
+            activities = self.trading_client.get('/account/activities/FILL', {'page_size': min(limit, 100)})
+            result = []
+            for a in activities[:limit]:
+                txn_time = a.get('transaction_time', '')
+                try:
+                    dt = datetime.fromisoformat(txn_time.replace('Z', '+00:00'))
+                    date_str = dt.strftime('%Y-%m-%d')
+                    time_str = dt.isoformat()
+                except Exception:
+                    date_str = txn_time[:10]
+                    time_str = txn_time
+                qty = float(a.get('qty', 0))
+                price = float(a.get('price', 0))
+                result.append({
+                    'date': date_str,
+                    'time': time_str,
+                    'symbol': a.get('symbol', ''),
+                    'side': a.get('side', ''),
+                    'qty': qty,
+                    'price': price,
+                    'value': qty * price,
+                })
+            return result
+        except Exception as e:
+            print(f"[AlpacaAdapter] Get Activities Error: {e}")
+            return []
+
     def cancel_all_orders(self):
         """Cancel all open orders."""
         try:
