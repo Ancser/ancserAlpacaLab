@@ -189,3 +189,5 @@ scripts/debug_benchmark.py
 /config
 /config
 config/live_strategy.json
+/logs
+/config

@@ -1,6 +1,8 @@
 import logging
 import json
 import os
+import time
+import subprocess
 import pandas as pd
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -17,6 +19,46 @@ ch.setFormatter(formatter)
 logger.addHandler(ch)
 
 DAILY_LOCK_PATH = "logs/daily_trade_lock.json"
+PID_FILE_PATH = "logs/ancser_daemon.pid"
+
+def _pid_is_running(pid: int) -> bool:
+    """Check if a PID is still alive using Windows tasklist."""
+    try:
+        result = subprocess.run(
+            ['tasklist', '/FI', f'PID eq {pid}', '/NH'],
+            capture_output=True, text=True
+        )
+        return str(pid) in result.stdout
+    except Exception:
+        return False
+
+def _check_single_instance() -> bool:
+    """
+    Returns True if another instance is already running (abort current).
+    Uses a PID file to detect duplicate processes.
+    """
+    if os.path.exists(PID_FILE_PATH):
+        try:
+            with open(PID_FILE_PATH, 'r') as f:
+                old_pid = int(f.read().strip())
+            if _pid_is_running(old_pid):
+                logger.warning(f"[SingleInstance] Another instance already running (PID {old_pid}). Exiting.")
+                return True
+        except Exception:
+            pass  # Stale or corrupt PID file — proceed
+    # Write current PID
+    os.makedirs(os.path.dirname(PID_FILE_PATH), exist_ok=True)
+    with open(PID_FILE_PATH, 'w') as f:
+        f.write(str(os.getpid()))
+    return False
+
+def _remove_pid_file():
+    """Remove PID file on clean shutdown."""
+    try:
+        if os.path.exists(PID_FILE_PATH):
+            os.remove(PID_FILE_PATH)
+    except Exception:
+        pass
 
 def _check_daily_lock() -> bool:
     """
@@ -208,12 +250,16 @@ class TitanEventLoop:
         # Schedule Jobs
         self.scheduler.add_job(self.heartbeat, 'interval', minutes=1, id='heartbeat')
         
-        # Rebalance: Hourly during market hours (simplistic approx for now)
-        self.scheduler.add_job(self.rebalance_check, 'cron', day_of_week='mon-fri', hour='9-16', minute=0, id='rebalance')
+        # Rebalance: Hourly during market hours, timezone locked to US/Eastern regardless of server location
+        self.scheduler.add_job(self.rebalance_check, 'cron', day_of_week='mon-fri', hour='9-16', minute=0, id='rebalance', timezone='America/New_York')
         
         self.scheduler.start()
         self.running = True
-        
+
+        # Run once immediately on startup so we don't miss the current window
+        logger.info("Running initial rebalance check on startup...")
+        self.rebalance_check()
+
         try:
             # Keep main thread alive
             while True:
@@ -226,6 +272,7 @@ class TitanEventLoop:
         logger.info("Stopping Titan Event Loop...")
         self.scheduler.shutdown()
         self.running = False
+        _remove_pid_file()
 
     def check_market_open(self) -> bool:
         """Check if market is currently open."""
@@ -262,6 +309,8 @@ if __name__ == "__main__":
     if args.run_once:
         run_once(force=args.force)
     else:
-        # Server Mode
+        # Server Mode — guard against duplicate instances
+        if _check_single_instance():
+            exit(0)
         loop = TitanEventLoop()
         loop.start()

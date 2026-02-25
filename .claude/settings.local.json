@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(.venv/Scripts/python -c \"import psutil; print\\(psutil.__version__\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import psutil; print\\(psutil.__version__\\)\")"
     ]
   }
 }
