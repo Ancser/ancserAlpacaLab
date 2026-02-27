@@ -228,6 +228,40 @@ class TitanEventLoop:
             logger.info("Executing Rebalance Orders...")
             oms.generate_and_execute_orders(target_weights)
 
+            # --- Inject Tracker Here ---
+            try:
+                from ancser_quant.execution.tracker import LiveTracker
+                tracker = LiveTracker()
+                
+                # Fetch latest account equity and today's P&L from Alpaca to log
+                acc = self.alpaca.get_account()
+                equity = float(acc.get('equity', 0.0))
+                
+                # Use daily P&L. If history is not available, just default to 0
+                portfolio_history = self.alpaca.get_portfolio_history(period="1D", timeframe="1D")
+                pl_vals = portfolio_history.get('profit_loss', [0])
+                pl_pcts = portfolio_history.get('profit_loss_pct', [0])
+                
+                day_pnl = pl_vals[-1] if pl_vals else 0.0
+                total_pnl_pct = pl_pcts[-1] if pl_pcts else 0.0
+                
+                today_str = datetime.now().strftime('%Y-%m-%d')
+                
+                tracker.record_daily_state(
+                    date_str=today_str,
+                    equity=equity,
+                    day_pnl=day_pnl,
+                    total_pnl_pct=total_pnl_pct,
+                    allocations=target_weights,
+                    factors=factors,
+                    target_scalar=final_scalar
+                )
+            except Exception as e_track:
+                logger.error(f"Failed to record tracker state: {e_track}")
+                import traceback
+                logger.error(traceback.format_exc())
+            # --- End Tracker ---
+
             # Write daily lock so restarts won't re-execute today
             _write_daily_lock()
 

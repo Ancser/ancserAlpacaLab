@@ -21,7 +21,7 @@ st.set_page_config(page_title="AncserAlpacaLab", layout="wide", page_icon=None)
 st.title("ancserAlpacaLab")
 
 # Sidebar Navigation
-page = st.sidebar.radio("Navigation", ["Dashboard", "Backtest"])
+page = st.sidebar.radio("Navigation", ["Dashboard", "Tracker", "Backtest"])
 
 # Display Log File Location
 st.sidebar.markdown("---")
@@ -176,112 +176,6 @@ if page == "Dashboard":
     except Exception as e:
         st.error(f"Failed to load holdings: {e}")
 
-    st.subheader("P&L by Date")
-    try:
-        # Daily P&L from Alpaca portfolio history
-        port_hist = adapter.get_portfolio_history(period="1M")
-        daily_pl = {}
-        daily_pl_pct = {}
-        if not port_hist.empty and 'profit_loss' in port_hist.columns:
-            for ts, row in port_hist.iterrows():
-                d = ts.strftime('%Y-%m-%d') if hasattr(ts, 'strftime') else str(ts)[:10]
-                daily_pl[d] = float(row.get('profit_loss', 0) or 0)
-                daily_pl_pct[d] = float(row.get('profit_loss_pct', 0) or 0)
-
-        # Actual fills from Alpaca activities
-        activities = adapter.get_activities(limit=500)
-        fills_by_date = {}
-        for act in activities:
-            d = act['date']
-            fills_by_date.setdefault(d, []).append(act)
-
-        all_dates = sorted(set(daily_pl.keys()) | set(fills_by_date.keys()), reverse=True)
-
-        if all_dates:
-            rows = []
-            for d in all_dates:
-                pl = daily_pl.get(d, None)
-                pl_pct = daily_pl_pct.get(d, None)
-                fills = fills_by_date.get(d, [])
-
-                buys = [f"{f['symbol']} x{f['qty']:.0f}@${f['price']:.2f}" for f in fills if f['side'] == 'buy']
-                sells = [f"{f['symbol']} x{f['qty']:.0f}@${f['price']:.2f}" for f in fills if f['side'] == 'sell']
-
-                rows.append({
-                    "Date": d,
-                    "Buys": ", ".join(buys) if buys else "-",
-                    "Sells": ", ".join(sells) if sells else "-",
-                    "Day P&L ($)": pl,
-                    "Day P&L (%)": pl_pct * 100 if pl_pct is not None else None,
-                })
-
-            pl_df = pd.DataFrame(rows).set_index("Date")
-
-            def color_pl(val):
-                if pd.isna(val) or not isinstance(val, (int, float)):
-                    return ""
-                return f"color: {'#00CC88' if val >= 0 else '#FF4B4B'}"
-
-            styled = pl_df.style.format({
-                "Day P&L ($)": lambda v: f"${v:+,.2f}" if pd.notna(v) else "-",
-                "Day P&L (%)": lambda v: f"{v:+.2f}%" if pd.notna(v) else "-",
-            }).applymap(color_pl, subset=["Day P&L ($)", "Day P&L (%)"])
-
-            st.dataframe(styled, width="stretch")
-
-            # Summary
-            pl_series = pd.Series({r["Date"]: r["Day P&L ($)"] for r in rows}).dropna()
-            if len(pl_series) > 0:
-                wins = (pl_series > 0).sum()
-                losses = (pl_series <= 0).sum()
-                w1, w2, w3, w4 = st.columns(4)
-                w1.metric("Win Rate", f"{wins/len(pl_series)*100:.0f}%", f"{wins}W / {losses}L")
-                w2.metric("Avg Win", f"${pl_series[pl_series > 0].mean():+,.2f}" if wins > 0 else "$0")
-                w3.metric("Avg Loss", f"${pl_series[pl_series <= 0].mean():+,.2f}" if losses > 0 else "$0")
-                w4.metric("Total P&L", f"${pl_series.sum():+,.2f}")
-        else:
-            st.info("No trade history available yet.")
-    except Exception as e:
-        st.error(f"Failed to load P&L history: {e}")
-
-    st.subheader("Recent Orders")
-    try:
-        orders = adapter.get_orders()
-        if orders:
-            ord_df = pd.DataFrame(orders)
-
-            # Calculate Display Value: Prefer Notional, else Filled Value (Qty * Price)
-            # ord_df['notional'] might be NaN if not notional order
-            # ord_df['filled_avg_price'] might be NaN if not filled
-
-            def get_val(row):
-                if pd.notna(row.get('notional')) and row.get('notional') > 0:
-                    return row['notional']
-                elif pd.notna(row.get('filled_avg_price')) and pd.notna(row.get('filled_qty')):
-                    return row['filled_avg_price'] * row['filled_qty']
-                return 0.0
-
-            ord_df['Value'] = ord_df.apply(get_val, axis=1)
-
-            # Formatting
-            display_cols = ['created_at', 'symbol', 'side', 'qty', 'notional', 'Value', 'status', 'filled_avg_price', 'type']
-            # Filter available columns
-            display_cols = [c for c in display_cols if c in ord_df.columns]
-
-            st.dataframe(
-                ord_df[display_cols].style.format({
-                    'qty': lambda x: f"{x:.2f}" if pd.notna(x) else "-",
-                    'notional': lambda x: f"${x:,.2f}" if pd.notna(x) else "-",
-                    'Value': lambda x: f"${x:,.2f}" if pd.notna(x) else "-",
-                    'filled_avg_price': lambda x: f"${x:,.2f}" if pd.notna(x) else "-"
-                }),
-                width="stretch"
-            )
-        else:
-            st.info("No recent orders.")
-    except Exception as e:
-        st.error(f"Failed to load orders: {e}")
-
     # --- Live Strategy Monitor (Auto-loaded) ---
     st.markdown("---")
     st.subheader("Live Strategy Configuration & Preview")
@@ -351,8 +245,284 @@ if page == "Dashboard":
         st.error(f"Failed to load live strategy: {e}")
         import traceback
         st.code(traceback.format_exc())
+    
+    st.markdown("---")
 
+    st.subheader("Performance & P&L by Date")
+    try:
+        # Daily P&L from Alpaca portfolio history
+        port_hist = adapter.get_portfolio_history(period="1M")
+        daily_pl = {}
+        daily_pl_pct = {}
+        if not port_hist.empty and 'profit_loss' in port_hist.columns:
+            for ts, row in port_hist.iterrows():
+                d = ts.strftime('%Y-%m-%d') if hasattr(ts, 'strftime') else str(ts)[:10]
+                daily_pl[d] = float(row.get('profit_loss', 0) or 0)
+                daily_pl_pct[d] = float(row.get('profit_loss_pct', 0) or 0)
 
+        # Actual fills from Alpaca activities
+        activities = adapter.get_activities(limit=500)
+        fills_by_date = {}
+        for act in activities:
+            d = act['date']
+            fills_by_date.setdefault(d, []).append(act)
+
+        all_dates = sorted(set(daily_pl.keys()) | set(fills_by_date.keys()), reverse=True)
+
+        if all_dates:
+            # 1. Performance Summary First
+            pl_series = pd.Series({d: daily_pl.get(d) for d in all_dates}).dropna()
+            today_date = datetime.today().strftime('%Y-%m-%d')
+            today_pl = pl_series.get(today_date, 0.0)
+
+            sum1, sum2, sum3, sum4, sum5 = st.columns(5)
+            # Find today's P&L and Win Rate
+            wins = (pl_series > 0).sum()
+            losses = (pl_series <= 0).sum()
+            win_rate = f"{wins/len(pl_series)*100:.0f}%" if len(pl_series) > 0 else "0%"
+            
+            delta_pct = f"{daily_pl_pct.get(today_date, 0)*100:+.2f}%" if today_date in daily_pl_pct else None
+            sum1.metric("Today's P&L", f"${today_pl:+,.2f}", delta=delta_pct)
+            sum2.metric("Win Rate", win_rate, f"{wins}W / {losses}L")
+            sum3.metric("Avg Win", f"${pl_series[pl_series > 0].mean():+,.2f}" if wins > 0 else "$0")
+            sum4.metric("Avg Loss", f"${pl_series[pl_series <= 0].mean():+,.2f}" if losses > 0 else "$0")
+            sum5.metric("Total P&L (1M)", f"${pl_series.sum():+,.2f}")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # 2. Daily Cards
+            visible_dates = all_dates[:10]
+            hidden_dates = all_dates[10:]
+            
+            def render_day_card(d_str):
+                with st.container(border=True):
+                    pl_val = daily_pl.get(d_str)
+                    pct_val = daily_pl_pct.get(d_str)
+                    day_fills = fills_by_date.get(d_str, [])
+                    
+                    if pl_val is None:
+                        hdr_color = "gray"
+                        hdr_pl = "No P&L Data"
+                    elif pl_val >= 0:
+                        hdr_color = "#00CC88"
+                        hdr_pl = f"+${pl_val:,.2f}"
+                        if pct_val is not None: hdr_pl += f" (+{pct_val*100:.2f}%)"
+                    else:
+                        hdr_color = "#FF4B4B"
+                        hdr_pl = f"-${abs(pl_val):,.2f}"
+                        if pct_val is not None: hdr_pl += f" ({pct_val*100:.2f}%)"
+                        
+                    st.markdown(f"#### {d_str} &nbsp;&nbsp;|&nbsp;&nbsp; <span style='color:{hdr_color}'>{hdr_pl}</span>", unsafe_allow_html=True)
+                    
+                    if day_fills:
+                        # Group fills by (symbol, side) to combine partial fills
+                        grouped_fills = {}
+                        for f in day_fills:
+                            key = (f['symbol'], f['side'])
+                            if key not in grouped_fills:
+                                grouped_fills[key] = {'qty': 0.0, 'value': 0.0}
+                            grouped_fills[key]['qty'] += f['qty']
+                            grouped_fills[key]['value'] += f['qty'] * f['price']
+                            
+                        processed_buys = []
+                        processed_sells = []
+                        for (sym, side), data in grouped_fills.items():
+                            avg_price = data['value'] / data['qty'] if data['qty'] > 0 else 0
+                            trade_str = f"<b>{sym}</b> &nbsp;x{data['qty']:g} @ \${avg_price:.2f}"
+                            if side == 'buy':
+                                processed_buys.append(trade_str)
+                            else:
+                                processed_sells.append(trade_str)
+                                
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("Buys")
+                            if processed_buys:
+                                st.markdown("<br>".join(processed_buys), unsafe_allow_html=True)
+                            else:
+                                st.caption("None")
+                        with col2:
+                            st.markdown("Sells")
+                            if processed_sells:
+                                st.markdown("<br>".join(processed_sells), unsafe_allow_html=True)
+                            else:
+                                st.caption("None")
+                    else:
+                        st.caption("No trades executed on this day.")
+
+            for date_key in visible_dates:
+                render_day_card(date_key)
+                
+            if hidden_dates:
+                with st.expander(f"Show older history ({len(hidden_dates)} days)"):
+                    for date_key in hidden_dates:
+                        render_day_card(date_key)
+
+        else:
+            st.info("No trade history available yet.")
+    except Exception as e:
+        st.error(f"Failed to load P&L history: {e}")
+
+    st.subheader("Recent Orders")
+    try:
+        orders = adapter.get_orders()
+        if orders:
+            ord_df = pd.DataFrame(orders)
+
+            # Calculate Display Value: Prefer Notional, else Filled Value (Qty * Price)
+            # ord_df['notional'] might be NaN if not notional order
+            # ord_df['filled_avg_price'] might be NaN if not filled
+
+            def get_val(row):
+                if pd.notna(row.get('notional')) and row.get('notional') > 0:
+                    return row['notional']
+                elif pd.notna(row.get('filled_avg_price')) and pd.notna(row.get('filled_qty')):
+                    return row['filled_avg_price'] * row['filled_qty']
+                return 0.0
+
+            ord_df['Value'] = ord_df.apply(get_val, axis=1)
+
+            # Formatting
+            display_cols = ['created_at', 'symbol', 'side', 'qty', 'notional', 'Value', 'status', 'filled_avg_price', 'type']
+            # Filter available columns
+            display_cols = [c for c in display_cols if c in ord_df.columns]
+
+            st.dataframe(
+                ord_df[display_cols].style.format({
+                    'qty': lambda x: f"{x:.2f}" if pd.notna(x) else "-",
+                    'notional': lambda x: f"${x:,.2f}" if pd.notna(x) else "-",
+                    'Value': lambda x: f"${x:,.2f}" if pd.notna(x) else "-",
+                    'filled_avg_price': lambda x: f"${x:,.2f}" if pd.notna(x) else "-"
+                }),
+                width="stretch"
+            )
+        else:
+            st.info("No recent orders.")
+    except Exception as e:
+        st.error(f"Failed to load orders: {e}")
+
+# --- Page: Tracker ---
+elif page == "Tracker":
+    st.header("Live vs Model Performance Tracker")
+    st.markdown("Compare actual executed portfolio performance against theoretical backtest predictions.")
+    
+    log_path = "logs/live_performance_log.json"
+    
+    try:
+        if not os.path.exists(log_path):
+            st.info("No live performance data recorded yet. Wait for the first daily rebalance execution.")
+        else:
+            with open(log_path, 'r') as f:
+                history = json.load(f)
+                
+            if not history:
+                st.info("Performance log is currently empty.")
+            else:
+                track_df = pd.DataFrame(history)
+                track_df['date'] = pd.to_datetime(track_df['date'])
+                track_df.set_index('date', inplace=True)
+                
+                # Fetch recent live strategy config to run the comparison backtest
+                config_path = "config/live_strategy.json"
+                if os.path.exists(config_path):
+                    with open(config_path, 'r') as f:
+                        live_config = json.load(f)
+                        
+                    start_date = track_df.index.min().strftime('%Y-%m-%d')
+                    # Backtest end date needs to encompass the last log date
+                    end_date = (track_df.index.max() + timedelta(days=1)).strftime('%Y-%m-%d')
+                    
+                    st.caption(f"Running comparative backtest from {start_date} to {track_df.index.max().strftime('%Y-%m-%d')} using active strategy config...")
+                    
+                    # Run backtest
+                    from ancser_quant.backtest import BacktestEngine
+                    
+                    # Need to initialize backtest with same initial capital as the actual start equity
+                    initial_equity = float(track_df['equity'].iloc[0])
+                    bt = BacktestEngine(
+                        universe=live_config.get('universe', []),
+                        start_date=start_date,
+                        end_date=end_date,
+                        initial_capital=initial_equity,
+                        data_source="alpaca" 
+                    )
+                    
+                    active_factors = live_config.get('active_factors', [])
+                    bt.enable_mwu(enabled=live_config.get('use_mwu', False))
+                    
+                    vol_target = live_config.get('vol_target', 0) if live_config.get('use_vol_target', False) else None
+                    
+                    # Let it run
+                    with st.spinner("Generating prediction overlay..."):
+                        if active_factors and live_config.get('universe', []):
+                            results = bt.run_simulation(
+                                selected_factors=active_factors,
+                                top_n=5,
+                                leverage=live_config.get('leverage', 1.0),
+                                enable_drift_regime=False, # Default
+                                vol_target=vol_target
+                            )
+                            
+                            pred_eq = results['equity_curve']
+
+                            pred_eq.index = pd.to_datetime(pred_eq.index)
+                            
+                            # Build combined chart
+                            fig = go.Figure()
+                            
+                            # Actual
+                            fig.add_trace(go.Scatter(
+                                x=track_df.index,
+                                y=track_df['equity'],
+                                mode='lines+markers',
+                                name='Live Actual',
+                                line=dict(color='#00CC88', width=3)
+                            ))
+                            
+                            # Predicted
+                            fig.add_trace(go.Scatter(
+                                x=pred_eq.index,
+                                y=pred_eq['Total Equity'],
+                                mode='lines',
+                                name='Model Predicted',
+                                line=dict(color='#888888', width=2, dash='dot')
+                            ))
+                            
+                            fig.update_layout(
+                                template='plotly_dark',
+                                hovermode='x unified',
+                                margin=dict(l=0, r=0, t=40, b=0),
+                                yaxis_title="Equity ($)"
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Delta Show
+                            latest_actual = float(track_df['equity'].iloc[-1])
+                            
+                            # Get the most recent pred date that exists in actual
+                            latest_pred = float(pred_eq['Total Equity'].iloc[-1]) if not pred_eq.empty else latest_actual
+                            
+                            delta = latest_actual - latest_pred
+                            delta_pct = (delta / latest_pred) if latest_pred else 0
+                            
+                            col1, col2, col3 = st.columns(3)
+                            col1.metric("Current Actual Equity", f"${latest_actual:,.2f}")
+                            col2.metric("Predicted Equity", f"${latest_pred:,.2f}")
+                            col3.metric("Tracking Difference", f"${delta:+,.2f}", f"{delta_pct:+.2%}", delta_color="normal")
+                            
+                            # Show specific daily log dump
+                            with st.expander("Raw Execution Log"):
+                                st.dataframe(track_df[['equity', 'day_pnl', 'total_pnl_pct', 'factors', 'target_scalar']])
+                        else:
+                            st.warning("Missing universe or factors in live config to run backtest comparison.")
+                else:
+                    st.warning("live_strategy.json not found. Cannot run comparative backtest.")
+                    st.line_chart(track_df['equity'])
+                    
+    except Exception as e:
+        st.error(f"Failed to load tracker: {e}")
+        import traceback
+        st.code(traceback.format_exc())
 
 # --- Page: Backtest ---
 elif page == "Backtest":
