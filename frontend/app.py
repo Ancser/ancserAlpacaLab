@@ -21,7 +21,7 @@ st.set_page_config(page_title="AncserAlpacaLab", layout="wide", page_icon=None)
 st.title("ancserAlpacaLab")
 
 # Sidebar Navigation
-page = st.sidebar.radio("Navigation", ["Dashboard", "Tracker", "Backtest"])
+page = st.sidebar.radio("Navigation", ["Dashboard", "Backtest"])
 
 # Display Log File Location
 st.sidebar.markdown("---")
@@ -43,8 +43,6 @@ def load_mock_data():
 
 # --- Page: Dashboard ---
 if page == "Dashboard":
-    st.header("Overview")
-    
     # Fetch Real Data
     from ancser_quant.data.alpaca_adapter import AlpacaAdapter
     try:
@@ -84,10 +82,67 @@ if page == "Dashboard":
     try:
         hist_df = adapter.get_portfolio_history(period=selected_tf)
         if not hist_df.empty:
-            # Create professional Plotly chart (TradingView-like)
-            fig_eq = go.Figure()
+            from plotly.subplots import make_subplots
 
-            # Add equity line
+            # Build cumulative realized gain (profit/loss, not proceeds)
+            # Need entry prices from rebalance_history to compute actual gain
+            eq_activities = adapter.get_activities(limit=500)
+
+            _rebal_path = "logs/rebalance_history.json"
+            _rebal_data = []
+            if os.path.exists(_rebal_path):
+                try:
+                    with open(_rebal_path, 'r') as f:
+                        _rebal_data = json.load(f)
+                except Exception:
+                    _rebal_data = []
+
+            # Build entry price lookup: {date: {symbol: entry_price}} from previous day's snapshot
+            _entry_prices_by_date = {}
+            for ri in range(1, len(_rebal_data)):
+                d = _rebal_data[ri].get('rebalance_date', '')
+                prev_positions = _rebal_data[ri - 1].get('positions', {})
+                _entry_prices_by_date[d] = {sym: info.get('entry_price', 0) for sym, info in prev_positions.items()}
+
+            # Aggregate sells by date, compute realized P&L = (sell_price - entry_price) * qty
+            realized_by_date = {}
+            for act in eq_activities:
+                if act['side'] == 'sell':
+                    d = act['date']
+                    sym = act['symbol']
+                    sell_price = act['price']
+                    sell_qty = act['qty']
+                    # Look up entry price from rebalance history
+                    entry_price = _entry_prices_by_date.get(d, {}).get(sym, sell_price)
+                    realized_pnl = (sell_price - entry_price) * sell_qty
+                    realized_by_date.setdefault(d, 0.0)
+                    realized_by_date[d] += realized_pnl
+
+            # Build daily realized gain/loss series aligned to equity dates
+            eq_dates = [ts.strftime('%Y-%m-%d') if hasattr(ts, 'strftime') else str(ts)[:10] for ts in hist_df.index]
+            daily_gains = []   # positive realized P&L (green)
+            daily_losses = []  # negative realized P&L (red)
+            for d in eq_dates:
+                day_pnl = realized_by_date.get(d, 0.0)
+                if day_pnl > 0:
+                    daily_gains.append(day_pnl)
+                    daily_losses.append(0.0)
+                elif day_pnl < 0:
+                    daily_gains.append(0.0)
+                    daily_losses.append(day_pnl)
+                else:
+                    daily_gains.append(0.0)
+                    daily_losses.append(0.0)
+
+            # 2-row subplot: equity on top, realized gain/loss bars on bottom
+            fig_eq = make_subplots(
+                rows=2, cols=1, shared_xaxes=True,
+                vertical_spacing=0.03,
+                row_heights=[0.7, 0.3],
+                subplot_titles=["", ""]
+            )
+
+            # Row 1: Equity line
             fig_eq.add_trace(go.Scatter(
                 x=hist_df.index,
                 y=hist_df['equity'],
@@ -96,51 +151,75 @@ if page == "Dashboard":
                 line=dict(color='#00CC96', width=2),
                 fill='tozeroy',
                 fillcolor='rgba(0, 204, 150, 0.1)'
-            ))
+            ), row=1, col=1)
 
-            # Calculate Y-axis range with padding (like TradingView)
+            # Row 2: Gain bars (green) + Loss bars (red)
+            fig_eq.add_trace(go.Bar(
+                x=hist_df.index,
+                y=daily_gains,
+                name='Realized Gain',
+                marker_color='rgba(0, 204, 136, 0.8)',
+            ), row=2, col=1)
+
+            fig_eq.add_trace(go.Bar(
+                x=hist_df.index,
+                y=daily_losses,
+                name='Realized Loss',
+                marker_color='rgba(255, 75, 75, 0.8)',
+            ), row=2, col=1)
+
+            # Calculate Y-axis range with padding for equity
             equity_values = hist_df['equity'].dropna().values
             if len(equity_values) > 0:
                 y_min = min(equity_values)
                 y_max = max(equity_values)
-                y_padding = (y_max - y_min) * 0.1  # 10% padding
+                y_padding = (y_max - y_min) * 0.1
                 y_range = [max(0, y_min - y_padding), y_max + y_padding]
             else:
                 y_range = None
 
-            # Layout with TradingView-like features
             fig_eq.update_layout(
-                yaxis=dict(
-                    range=y_range,
-                    fixedrange=False,  # Allow zoom
-                    rangemode='tozero',  # Don't go below zero
-                    constraintoward='bottom',  # Constrain toward bottom (zero)
-                    title="Equity ($)"
+                xaxis2=dict(
+                    type='date',
+                    title="Date"
                 ),
                 xaxis=dict(
                     type='date',
-                    rangeslider=dict(visible=False),  # Hide range slider
-                    title="Date"
-                ),
-                xaxis_rangeselector=dict(
-                    buttons=list([
-                        dict(count=7, label="1W", step="day", stepmode="backward"),
-                        dict(count=1, label="1M", step="month", stepmode="backward"),
-                        dict(count=3, label="3M", step="month", stepmode="backward"),
-                        dict(count=1, label="YTD", step="year", stepmode="todate"),
-                        dict(count=1, label="1Y", step="year", stepmode="backward"),
-                        dict(step="all", label="All")
-                    ]),
-                    bgcolor='rgba(150, 150, 150, 0.1)',
-                    activecolor='rgba(100, 100, 100, 0.3)'
+                    rangeslider=dict(visible=False),
+                    rangeselector=dict(
+                        buttons=list([
+                            dict(count=7, label="1W", step="day", stepmode="backward"),
+                            dict(count=1, label="1M", step="month", stepmode="backward"),
+                            dict(count=3, label="3M", step="month", stepmode="backward"),
+                            dict(count=1, label="YTD", step="year", stepmode="todate"),
+                            dict(count=1, label="1Y", step="year", stepmode="backward"),
+                            dict(step="all", label="All")
+                        ]),
+                        bgcolor='rgba(150, 150, 150, 0.1)',
+                        activecolor='rgba(100, 100, 100, 0.3)'
+                    ),
                 ),
                 hovermode='x unified',
                 margin=dict(l=0, r=0, t=40, b=0),
-                dragmode='zoom',  # Default to zoom mode
-                template='plotly_dark'
+                dragmode='zoom',
+                template='plotly_dark',
+                barmode='overlay',
+                height=600
             )
 
-            # Config options
+            # Equity Y-axis (row 1)
+            fig_eq.update_yaxes(
+                title_text="Equity ($)", range=y_range,
+                fixedrange=False, rangemode='tozero', constraintoward='bottom',
+                row=1, col=1
+            )
+            # Realized gain/loss Y-axis (row 2)
+            fig_eq.update_yaxes(
+                title_text="Realized P&L ($)",
+                fixedrange=False, zeroline=True, zerolinecolor='rgba(255,255,255,0.3)',
+                row=2, col=1
+            )
+
             config = {
                 'scrollZoom': True,
                 'displayModeBar': True,
@@ -158,19 +237,36 @@ if page == "Dashboard":
     try:
         positions = adapter.get_positions()
         if positions:
-            pos_df = pd.DataFrame(positions)
-            # Format columns
-            st.dataframe(
-                pos_df.style.format({
-                    'Qty': "{:.2f}",
-                    'Market Value': "${:,.2f}",
-                    'Avg Entry': "${:,.2f}",
-                    'Current Price': "${:,.2f}",
-                    'Unrealized P&L': "${:,.2f}",
-                    'P&L %': "{:.2f}%"
-                }), 
-                width="stretch"
-            )
+            # Card layout: 4 cards per row
+            cards_per_row = 4
+            for row_start in range(0, len(positions), cards_per_row):
+                row_positions = positions[row_start:row_start + cards_per_row]
+                cols = st.columns(cards_per_row)
+                for idx, pos in enumerate(row_positions):
+                    sym = pos['Symbol']
+                    avg_entry = pos['Avg Entry']
+                    cur_price = pos['Current Price']
+                    unrealized_pl = pos['Unrealized P&L']
+                    pl_pct = pos['P&L %']
+                    is_profit = unrealized_pl >= 0
+                    color = "#00CC88" if is_profit else "#FF4B4B"
+                    arrow = "▲" if is_profit else "▼"
+                    sign = "+" if is_profit else ""
+
+                    with cols[idx]:
+                        with st.container(border=True):
+                            st.markdown(
+                                f"<div style='display:flex;justify-content:space-between;'>"
+                                f"<b style='font-size:1.1em'>{sym}</b>"
+                                f"<span style='color:{color};font-weight:bold'>{sign}{pl_pct:.2f}%</span>"
+                                f"</div>"
+                                f"<div style='color:#aaa;font-size:0.85em'>Avg: &#36;{avg_entry:,.2f}</div>"
+                                f"<div style='font-size:0.85em'>Now: &#36;{cur_price:,.2f}</div>"
+                                f"<div style='color:{color};font-weight:bold'>"
+                                f"P&L: {sign}&#36;{abs(unrealized_pl):,.2f} {arrow}"
+                                f"</div>",
+                                unsafe_allow_html=True
+                            )
         else:
             st.info("No open positions.")
     except Exception as e:
@@ -245,7 +341,252 @@ if page == "Dashboard":
         st.error(f"Failed to load live strategy: {e}")
         import traceback
         st.code(traceback.format_exc())
-    
+
+    # --- Backtest vs Live Comparison Chart ---
+    st.markdown("---")
+    st.subheader("Strategy Performance: Backtest vs Live")
+
+    try:
+        _rebal_history_path = "logs/rebalance_history.json"
+        _config_path = "config/live_strategy.json"
+
+        if os.path.exists(_rebal_history_path) and os.path.exists(_config_path):
+            with open(_rebal_history_path, 'r') as f:
+                _rebal_hist = json.load(f)
+            with open(_config_path, 'r') as f:
+                _live_cfg = json.load(f)
+
+            if len(_rebal_hist) >= 2:
+                # Group rebalance entries into segments by strategy config
+                def _config_key(cfg):
+                    """Create a hashable key from strategy config."""
+                    if cfg is None:
+                        return None
+                    return (
+                        tuple(sorted(cfg.get('active_factors', []))),
+                        cfg.get('use_mwu', False),
+                        cfg.get('leverage', 1.0),
+                        cfg.get('use_vol_target', False),
+                        cfg.get('vol_target', 0.20),
+                        cfg.get('strategy_mode', 'long_only'),
+                    )
+
+                segments = []  # list of {start_date, end_date, config}
+                current_cfg = _rebal_hist[0].get('strategy_config', None)
+                seg_start = _rebal_hist[0]['rebalance_date']
+
+                for i in range(1, len(_rebal_hist)):
+                    entry = _rebal_hist[i]
+                    entry_cfg = entry.get('strategy_config', None)
+                    if _config_key(entry_cfg) != _config_key(current_cfg):
+                        # Strategy changed: close previous segment
+                        segments.append({
+                            'start_date': seg_start,
+                            'end_date': _rebal_hist[i - 1]['rebalance_date'],
+                            'config': current_cfg
+                        })
+                        seg_start = entry['rebalance_date']
+                        current_cfg = entry_cfg
+
+                # Close final segment (end = yesterday)
+                yesterday = (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')
+                segments.append({
+                    'start_date': seg_start,
+                    'end_date': yesterday,
+                    'config': current_cfg
+                })
+
+                # For segments without saved config, fall back to current live config
+                fallback_cfg = {
+                    'active_factors': _live_cfg.get('active_factors', []),
+                    'use_mwu': _live_cfg.get('use_mwu', False),
+                    'leverage': _live_cfg.get('leverage', 1.0),
+                    'use_vol_target': _live_cfg.get('use_vol_target', False),
+                    'vol_target': _live_cfg.get('vol_target', 0.20),
+                    'strategy_mode': _live_cfg.get('strategy_mode', 'long_only'),
+                }
+
+                # Get actual equity curve from Alpaca
+                earliest_date = _rebal_hist[0]['rebalance_date']
+                # Calculate period needed
+                days_diff = (datetime.today() - datetime.strptime(earliest_date, '%Y-%m-%d')).days
+                if days_diff <= 30:
+                    _period = "1M"
+                elif days_diff <= 90:
+                    _period = "3M"
+                elif days_diff <= 365:
+                    _period = "1A"
+                else:
+                    _period = "5A"
+
+                actual_hist = adapter.get_portfolio_history(period=_period)
+
+                if not actual_hist.empty:
+                    with st.spinner("Running backtest comparison (Alpaca data)..."):
+                        from ancser_quant.backtest import BacktestEngine
+
+                        universe = _live_cfg.get('universe', [])
+                        if not universe:
+                            st.warning("No universe in live config.")
+                        else:
+                            # Run backtest for each segment and stitch together
+                            fig_bt = go.Figure()
+
+                            # Plot actual equity (solid green)
+                            fig_bt.add_trace(go.Scatter(
+                                x=actual_hist.index,
+                                y=actual_hist['equity'],
+                                mode='lines',
+                                name='Actual (Live)',
+                                line=dict(color='#00CC96', width=2.5)
+                            ))
+
+                            # Initial capital from first rebalance snapshot
+                            first_snap = _rebal_hist[0]
+                            initial_eq = sum(p.get('value', 0) for p in first_snap.get('positions', {}).values())
+                            if initial_eq <= 0:
+                                initial_eq = float(actual_hist['equity'].iloc[0])
+
+                            seg_colors = ['#AA88FF', '#FF8888', '#88CCFF', '#FFAA44']
+                            FACTOR_LOOKBACK_DAYS = 90  # Buffer for factor warm-up (momentum, RSI, etc.)
+
+                            for seg_i, seg in enumerate(segments):
+                                cfg = seg['config'] or fallback_cfg
+                                s_date = seg['start_date']
+                                e_date = seg['end_date']
+
+                                if s_date >= e_date:
+                                    continue
+
+                                # Determine initial capital for this segment from actual equity
+                                seg_actual = actual_hist[actual_hist.index >= pd.Timestamp(s_date)]
+                                if seg_actual.empty:
+                                    continue
+                                seg_init_eq = float(seg_actual['equity'].iloc[0])
+
+                                try:
+                                    # Fetch data with lookback buffer so factors can compute
+                                    buffer_start = (datetime.strptime(s_date, '%Y-%m-%d') - timedelta(days=FACTOR_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
+
+                                    engine = BacktestEngine(
+                                        initial_capital=100000,
+                                        data_source='alpaca'  # Use Alpaca data for consistency with live
+                                    )
+                                    data = engine.fetch_and_prepare_data(
+                                        universe, buffer_start, e_date
+                                    )
+                                    if data is not None and not data.empty:
+                                        res_df, w_df, _ = engine.run_simulation(
+                                            data,
+                                            active_factors=cfg.get('active_factors', fallback_cfg['active_factors']),
+                                            leverage=cfg.get('leverage', 1.0),
+                                            use_mwu=cfg.get('use_mwu', False),
+                                            use_vol_target=cfg.get('use_vol_target', False),
+                                            vol_target_pct=cfg.get('vol_target', 0.20),
+                                            strategy_mode=cfg.get('strategy_mode', 'long_only'),
+                                        )
+
+                                        if not res_df.empty:
+                                            # Trim to live period only (handle tz-aware Alpaca timestamps)
+                                            live_start_ts = pd.Timestamp(s_date)
+                                            if res_df.index.tz is not None:
+                                                live_start_ts = live_start_ts.tz_localize(res_df.index.tz)
+                                            res_df = res_df[res_df.index >= live_start_ts]
+
+                                            if not res_df.empty:
+                                                # Rescale equity so backtest starts at same level as live
+                                                bt_start_val = float(res_df['equity'].iloc[0])
+                                                if bt_start_val > 0:
+                                                    scale = seg_init_eq / bt_start_val
+                                                    res_df['equity'] = res_df['equity'] * scale
+
+                                                color = seg_colors[seg_i % len(seg_colors)]
+                                                factors_str = ", ".join(cfg.get('active_factors', [])[:3])
+                                                fig_bt.add_trace(go.Scatter(
+                                                    x=res_df.index,
+                                                    y=res_df['equity'],
+                                                    mode='lines',
+                                                    name=f'Backtest ({factors_str})',
+                                                    line=dict(color=color, width=2, dash='dot')
+                                                ))
+                                except Exception as seg_e:
+                                    st.caption(f"Segment {s_date}-{e_date} backtest failed: {seg_e}")
+                                    import traceback
+                                    st.caption(traceback.format_exc())
+
+                            # --- Overlay real trade fills as markers ---
+                            try:
+                                _trade_fills = adapter.get_activities(limit=500)
+                                if _trade_fills:
+                                    # Build equity lookup: date_str -> equity value
+                                    _eq_lookup = {}
+                                    for ts, row in actual_hist.iterrows():
+                                        d_str = ts.strftime('%Y-%m-%d') if hasattr(ts, 'strftime') else str(ts)[:10]
+                                        _eq_lookup[d_str] = float(row['equity'])
+
+                                    buy_dates, buy_eq, buy_texts = [], [], []
+                                    sell_dates, sell_eq, sell_texts = [], [], []
+
+                                    for fill in _trade_fills:
+                                        d = fill['date']
+                                        eq_val = _eq_lookup.get(d)
+                                        if eq_val is None:
+                                            continue
+                                        label = f"{fill['symbol']} x{fill['qty']:.1f} @ ${fill['price']:.2f}"
+                                        if fill['side'] == 'buy':
+                                            buy_dates.append(pd.Timestamp(d))
+                                            buy_eq.append(eq_val)
+                                            buy_texts.append(label)
+                                        else:
+                                            sell_dates.append(pd.Timestamp(d))
+                                            sell_eq.append(eq_val)
+                                            sell_texts.append(label)
+
+                                    if buy_dates:
+                                        fig_bt.add_trace(go.Scatter(
+                                            x=buy_dates, y=buy_eq,
+                                            mode='markers',
+                                            name='Buy Fills',
+                                            marker=dict(symbol='triangle-up', size=10, color='#00CC96',
+                                                        line=dict(width=1, color='white')),
+                                            text=buy_texts, hoverinfo='text+x'
+                                        ))
+                                    if sell_dates:
+                                        fig_bt.add_trace(go.Scatter(
+                                            x=sell_dates, y=sell_eq,
+                                            mode='markers',
+                                            name='Sell Fills',
+                                            marker=dict(symbol='triangle-down', size=10, color='#FF4B4B',
+                                                        line=dict(width=1, color='white')),
+                                            text=sell_texts, hoverinfo='text+x'
+                                        ))
+                            except Exception as _te:
+                                pass  # Trade markers are optional, don't break chart
+
+                            fig_bt.update_layout(
+                                template='plotly_dark',
+                                hovermode='x unified',
+                                margin=dict(l=0, r=0, t=40, b=0),
+                                yaxis_title="Equity ($)",
+                                xaxis_title="Date",
+                                legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+                            )
+                            st.plotly_chart(fig_bt, width="stretch")
+
+                            # Tracking delta metrics
+                            latest_actual = float(actual_hist['equity'].iloc[-1])
+                            st.caption(f"Live Equity: ${latest_actual:,.2f}")
+                else:
+                    st.info("No portfolio history available for comparison.")
+            else:
+                st.info("Need at least 2 rebalance entries for comparison. Strategy will auto-populate as daily rebalances run.")
+        else:
+            st.info("Waiting for rebalance history and live config to enable backtest comparison.")
+    except Exception as e:
+        st.error(f"Failed to run backtest comparison: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+
     st.markdown("---")
 
     st.subheader("Performance & P&L by Date")
@@ -267,6 +608,37 @@ if page == "Dashboard":
             d = act['date']
             fills_by_date.setdefault(d, []).append(act)
 
+        # Load rebalance_history for realized gain calculation
+        rebal_history = []
+        rebal_history_path = "logs/rebalance_history.json"
+        if os.path.exists(rebal_history_path):
+            try:
+                with open(rebal_history_path, 'r') as f:
+                    rebal_history = json.load(f)
+            except Exception:
+                rebal_history = []
+
+        # Build lookup: date -> snapshot positions, and date -> previous day snapshot
+        rebal_by_date = {}
+        rebal_prev = {}  # date -> previous snapshot's positions
+        for i, snap in enumerate(rebal_history):
+            d = snap.get('rebalance_date', '')
+            rebal_by_date[d] = snap.get('positions', {})
+            if i > 0:
+                rebal_prev[d] = rebal_history[i - 1].get('positions', {})
+
+        # Build sell prices from activities: date -> {symbol: avg_sell_price}
+        sell_prices_by_date = {}
+        for act in activities:
+            if act['side'] == 'sell':
+                d = act['date']
+                sell_prices_by_date.setdefault(d, {})
+                sym = act['symbol']
+                if sym not in sell_prices_by_date[d]:
+                    sell_prices_by_date[d][sym] = {'total_value': 0.0, 'total_qty': 0.0}
+                sell_prices_by_date[d][sym]['total_value'] += act['qty'] * act['price']
+                sell_prices_by_date[d][sym]['total_qty'] += act['qty']
+
         all_dates = sorted(set(daily_pl.keys()) | set(fills_by_date.keys()), reverse=True)
 
         if all_dates:
@@ -276,64 +648,63 @@ if page == "Dashboard":
             today_pl = pl_series.get(today_date, 0.0)
 
             sum1, sum2, sum3, sum4, sum5 = st.columns(5)
-            # Find today's P&L and Win Rate
             wins = (pl_series > 0).sum()
             losses = (pl_series <= 0).sum()
             win_rate = f"{wins/len(pl_series)*100:.0f}%" if len(pl_series) > 0 else "0%"
-            
+
             delta_pct = f"{daily_pl_pct.get(today_date, 0)*100:+.2f}%" if today_date in daily_pl_pct else None
             sum1.metric("Today's P&L", f"${today_pl:+,.2f}", delta=delta_pct)
             sum2.metric("Win Rate", win_rate, f"{wins}W / {losses}L")
             sum3.metric("Avg Win", f"${pl_series[pl_series > 0].mean():+,.2f}" if wins > 0 else "$0")
             sum4.metric("Avg Loss", f"${pl_series[pl_series <= 0].mean():+,.2f}" if losses > 0 else "$0")
             sum5.metric("Total P&L (1M)", f"${pl_series.sum():+,.2f}")
-            
+
             st.markdown("<br>", unsafe_allow_html=True)
 
             # 2. Daily Cards
             visible_dates = all_dates[:10]
             hidden_dates = all_dates[10:]
-            
+
             def render_day_card(d_str):
                 with st.container(border=True):
                     pl_val = daily_pl.get(d_str)
                     pct_val = daily_pl_pct.get(d_str)
                     day_fills = fills_by_date.get(d_str, [])
-                    
+
                     if pl_val is None:
                         hdr_color = "gray"
                         hdr_pl = "No P&L Data"
                     elif pl_val >= 0:
                         hdr_color = "#00CC88"
-                        hdr_pl = f"+${pl_val:,.2f}"
+                        hdr_pl = f"+&#36;{pl_val:,.2f}"
                         if pct_val is not None: hdr_pl += f" (+{pct_val*100:.2f}%)"
                     else:
                         hdr_color = "#FF4B4B"
-                        hdr_pl = f"-${abs(pl_val):,.2f}"
+                        hdr_pl = f"-&#36;{abs(pl_val):,.2f}"
                         if pct_val is not None: hdr_pl += f" ({pct_val*100:.2f}%)"
-                        
+
                     st.markdown(f"#### {d_str} &nbsp;&nbsp;|&nbsp;&nbsp; <span style='color:{hdr_color}'>{hdr_pl}</span>", unsafe_allow_html=True)
-                    
+
                     if day_fills:
                         # Group fills by (symbol, side) to combine partial fills
                         grouped_fills = {}
-                        for f in day_fills:
-                            key = (f['symbol'], f['side'])
+                        for fill in day_fills:
+                            key = (fill['symbol'], fill['side'])
                             if key not in grouped_fills:
                                 grouped_fills[key] = {'qty': 0.0, 'value': 0.0}
-                            grouped_fills[key]['qty'] += f['qty']
-                            grouped_fills[key]['value'] += f['qty'] * f['price']
-                            
+                            grouped_fills[key]['qty'] += fill['qty']
+                            grouped_fills[key]['value'] += fill['qty'] * fill['price']
+
                         processed_buys = []
                         processed_sells = []
                         for (sym, side), data in grouped_fills.items():
                             avg_price = data['value'] / data['qty'] if data['qty'] > 0 else 0
-                            trade_str = f"<b>{sym}</b> &nbsp;x{data['qty']:g} @ \${avg_price:.2f}"
+                            trade_str = f"<b>{sym}</b> &nbsp;x{data['qty']:g} @ &#36;{avg_price:.2f}"
                             if side == 'buy':
                                 processed_buys.append(trade_str)
                             else:
                                 processed_sells.append(trade_str)
-                                
+
                         col1, col2 = st.columns(2)
                         with col1:
                             st.markdown("Buys")
@@ -349,6 +720,50 @@ if page == "Dashboard":
                                 st.caption("None")
                     else:
                         st.caption("No trades executed on this day.")
+
+                    # Realized Gains: compare today's rebalance vs previous day's snapshot
+                    prev_positions = rebal_prev.get(d_str, {})
+                    today_positions = rebal_by_date.get(d_str, {})
+                    day_sell_prices = sell_prices_by_date.get(d_str, {})
+
+                    if prev_positions:
+                        # Stocks in previous snapshot but NOT in today's = fully exited
+                        exited_syms = set(prev_positions.keys()) - set(today_positions.keys())
+                        realized_lines = []
+                        total_realized = 0.0
+
+                        for sym in sorted(exited_syms):
+                            entry_info = prev_positions[sym]
+                            entry_price = entry_info.get('entry_price', 0)
+                            qty = entry_info.get('qty', 0)
+                            # Use actual sell price from activities if available
+                            if sym in day_sell_prices and day_sell_prices[sym]['total_qty'] > 0:
+                                sell_price = day_sell_prices[sym]['total_value'] / day_sell_prices[sym]['total_qty']
+                                sell_qty = day_sell_prices[sym]['total_qty']
+                            else:
+                                sell_price = entry_price  # fallback
+                                sell_qty = qty
+                            realized = (sell_price - entry_price) * sell_qty
+                            total_realized += realized
+                            r_color = "#00CC88" if realized >= 0 else "#FF4B4B"
+                            r_icon = "+" if realized >= 0 else ""
+                            realized_lines.append(
+                                f"<span style='color:{r_color}'><b>{sym}</b>: "
+                                f"x{sell_qty:g} sold @ &#36;{sell_price:.2f} (entry &#36;{entry_price:.2f}) "
+                                f"= {r_icon}&#36;{abs(realized):,.2f}</span>"
+                            )
+
+                        if realized_lines:
+                            st.markdown("---")
+                            total_color = "#00CC88" if total_realized >= 0 else "#FF4B4B"
+                            total_sign = "+" if total_realized >= 0 else ""
+                            st.markdown(
+                                f"**Realized Gains** &nbsp; | &nbsp; "
+                                f"<span style='color:{total_color};font-weight:bold'>"
+                                f"Total: {total_sign}&#36;{abs(total_realized):,.2f}</span>",
+                                unsafe_allow_html=True
+                            )
+                            st.markdown("<br>".join(realized_lines), unsafe_allow_html=True)
 
             for date_key in visible_dates:
                 render_day_card(date_key)
@@ -400,129 +815,6 @@ if page == "Dashboard":
             st.info("No recent orders.")
     except Exception as e:
         st.error(f"Failed to load orders: {e}")
-
-# --- Page: Tracker ---
-elif page == "Tracker":
-    st.header("Live vs Model Performance Tracker")
-    st.markdown("Compare actual executed portfolio performance against theoretical backtest predictions.")
-    
-    log_path = "logs/live_performance_log.json"
-    
-    try:
-        if not os.path.exists(log_path):
-            st.info("No live performance data recorded yet. Wait for the first daily rebalance execution.")
-        else:
-            with open(log_path, 'r') as f:
-                history = json.load(f)
-                
-            if not history:
-                st.info("Performance log is currently empty.")
-            else:
-                track_df = pd.DataFrame(history)
-                track_df['date'] = pd.to_datetime(track_df['date'])
-                track_df.set_index('date', inplace=True)
-                
-                # Fetch recent live strategy config to run the comparison backtest
-                config_path = "config/live_strategy.json"
-                if os.path.exists(config_path):
-                    with open(config_path, 'r') as f:
-                        live_config = json.load(f)
-                        
-                    start_date = track_df.index.min().strftime('%Y-%m-%d')
-                    # Backtest end date needs to encompass the last log date
-                    end_date = (track_df.index.max() + timedelta(days=1)).strftime('%Y-%m-%d')
-                    
-                    st.caption(f"Running comparative backtest from {start_date} to {track_df.index.max().strftime('%Y-%m-%d')} using active strategy config...")
-                    
-                    # Run backtest
-                    from ancser_quant.backtest import BacktestEngine
-                    
-                    # Need to initialize backtest with same initial capital as the actual start equity
-                    initial_equity = float(track_df['equity'].iloc[0])
-                    bt = BacktestEngine(
-                        universe=live_config.get('universe', []),
-                        start_date=start_date,
-                        end_date=end_date,
-                        initial_capital=initial_equity,
-                        data_source="alpaca" 
-                    )
-                    
-                    active_factors = live_config.get('active_factors', [])
-                    bt.enable_mwu(enabled=live_config.get('use_mwu', False))
-                    
-                    vol_target = live_config.get('vol_target', 0) if live_config.get('use_vol_target', False) else None
-                    
-                    # Let it run
-                    with st.spinner("Generating prediction overlay..."):
-                        if active_factors and live_config.get('universe', []):
-                            results = bt.run_simulation(
-                                selected_factors=active_factors,
-                                top_n=5,
-                                leverage=live_config.get('leverage', 1.0),
-                                enable_drift_regime=False, # Default
-                                vol_target=vol_target
-                            )
-                            
-                            pred_eq = results['equity_curve']
-
-                            pred_eq.index = pd.to_datetime(pred_eq.index)
-                            
-                            # Build combined chart
-                            fig = go.Figure()
-                            
-                            # Actual
-                            fig.add_trace(go.Scatter(
-                                x=track_df.index,
-                                y=track_df['equity'],
-                                mode='lines+markers',
-                                name='Live Actual',
-                                line=dict(color='#00CC88', width=3)
-                            ))
-                            
-                            # Predicted
-                            fig.add_trace(go.Scatter(
-                                x=pred_eq.index,
-                                y=pred_eq['Total Equity'],
-                                mode='lines',
-                                name='Model Predicted',
-                                line=dict(color='#888888', width=2, dash='dot')
-                            ))
-                            
-                            fig.update_layout(
-                                template='plotly_dark',
-                                hovermode='x unified',
-                                margin=dict(l=0, r=0, t=40, b=0),
-                                yaxis_title="Equity ($)"
-                            )
-                            st.plotly_chart(fig, use_container_width=True)
-                            
-                            # Delta Show
-                            latest_actual = float(track_df['equity'].iloc[-1])
-                            
-                            # Get the most recent pred date that exists in actual
-                            latest_pred = float(pred_eq['Total Equity'].iloc[-1]) if not pred_eq.empty else latest_actual
-                            
-                            delta = latest_actual - latest_pred
-                            delta_pct = (delta / latest_pred) if latest_pred else 0
-                            
-                            col1, col2, col3 = st.columns(3)
-                            col1.metric("Current Actual Equity", f"${latest_actual:,.2f}")
-                            col2.metric("Predicted Equity", f"${latest_pred:,.2f}")
-                            col3.metric("Tracking Difference", f"${delta:+,.2f}", f"{delta_pct:+.2%}", delta_color="normal")
-                            
-                            # Show specific daily log dump
-                            with st.expander("Raw Execution Log"):
-                                st.dataframe(track_df[['equity', 'day_pnl', 'total_pnl_pct', 'factors', 'target_scalar']])
-                        else:
-                            st.warning("Missing universe or factors in live config to run backtest comparison.")
-                else:
-                    st.warning("live_strategy.json not found. Cannot run comparative backtest.")
-                    st.line_chart(track_df['equity'])
-                    
-    except Exception as e:
-        st.error(f"Failed to load tracker: {e}")
-        import traceback
-        st.code(traceback.format_exc())
 
 # --- Page: Backtest ---
 elif page == "Backtest":

@@ -226,7 +226,7 @@ class TitanEventLoop:
             oms = OrderManagementSystem()
             
             logger.info("Executing Rebalance Orders...")
-            oms.generate_and_execute_orders(target_weights)
+            oms.generate_and_execute_orders(target_weights, strategy_config=strategy_config)
 
             # --- Inject Tracker Here ---
             try:
@@ -319,14 +319,9 @@ class TitanEventLoop:
             return False
 
 def run_once(force: bool = False):
-    """Run the rebalance logic once and exit."""
+    """Run the rebalance logic once and exit. Always skips market-open check so pre-market orders work."""
     loop = TitanEventLoop()
     logger.info("--- Starting Daily Batch Execution ---")
-    
-    if not force:
-        if not loop.check_market_open():
-            logger.warning("Market is Closed. Use --force to run anyway. Exiting.")
-            return
 
     logger.info("Running Rebalance Logic...")
     loop.rebalance_check(force=force)

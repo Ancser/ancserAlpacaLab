@@ -19,7 +19,7 @@ class OrderManagementSystem:
     def __init__(self):
         self.alpaca = AlpacaAdapter() # Use adapter for API access
 
-    def generate_and_execute_orders(self, target_weights: dict) -> list:
+    def generate_and_execute_orders(self, target_weights: dict, strategy_config: dict = None) -> list:
         """
         1. Get Current Portfolio (Positions + Cash)
         2. Fetch Latest Prices for all involved symbols
@@ -172,6 +172,16 @@ class OrderManagementSystem:
                 "rebalance_time": datetime.now().isoformat(),
                 "positions": snapshot_positions
             }
+            # Save strategy config for backtest-vs-live comparison
+            if strategy_config:
+                snapshot["strategy_config"] = {
+                    "active_factors": strategy_config.get("active_factors", []),
+                    "use_mwu": strategy_config.get("use_mwu", False),
+                    "leverage": strategy_config.get("leverage", 1.0),
+                    "use_vol_target": strategy_config.get("use_vol_target", False),
+                    "vol_target": strategy_config.get("vol_target", 0.20),
+                    "strategy_mode": strategy_config.get("strategy_mode", "long_only"),
+                }
             os.makedirs(os.path.dirname(REBALANCE_SNAPSHOT_PATH), exist_ok=True)
             # Write latest snapshot
             with open(REBALANCE_SNAPSHOT_PATH, 'w') as f:
