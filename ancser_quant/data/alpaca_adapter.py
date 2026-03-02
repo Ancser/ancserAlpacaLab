@@ -227,13 +227,31 @@ class AlpacaAdapter:
             print(f"[AlpacaAdapter] Get Latest Prices Error: {e}")
             return {}
 
-    def get_activities(self, limit: int = 200) -> List[Dict]:
-        """Fetch trade fill activities (actual executed trades) from Alpaca."""
+    def get_activities(self, limit: int = 500) -> List[Dict]:
+        """Fetch trade fill activities (actual executed trades) from Alpaca with pagination."""
         try:
-            # Use raw REST endpoint — GetPortfolioActivitiesRequest not available in alpaca-py 0.43.x
-            activities = self.trading_client.get('/account/activities/FILL', {'page_size': min(limit, 100)})
+            all_activities = []
+            page_token = None
+            page_size = min(limit, 100)
+
+            while len(all_activities) < limit:
+                params = {'page_size': page_size}
+                if page_token:
+                    params['page_token'] = page_token
+                page = self.trading_client.get('/account/activities/FILL', params)
+                if not page:
+                    break
+                all_activities.extend(page)
+                if len(page) < page_size:
+                    break  # No more pages
+                # Alpaca uses the last activity's id as page_token for next page
+                last_id = page[-1].get('id', '')
+                if not last_id:
+                    break
+                page_token = last_id
+
             result = []
-            for a in activities[:limit]:
+            for a in all_activities[:limit]:
                 txn_time = a.get('transaction_time', '')
                 try:
                     dt = datetime.fromisoformat(txn_time.replace('Z', '+00:00'))

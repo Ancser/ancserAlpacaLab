@@ -52,18 +52,82 @@ if page == "Dashboard":
         st.error(f"Failed to connect to Alpaca: {e}")
         acct = {'equity': 0.0, 'buying_power': 0.0}
 
+    # --- Load all activities & rebalance data ONCE, compute realized gains ONCE ---
+    all_activities = []
+    _global_rebal = []
+    # realized_by_date: {date: total_pnl} for equity chart
+    # realized_detail: {date: {sym: {sell_value, sell_qty, entry_price, realized}}} for day cards
+    _global_realized_by_date = {}
+    _global_realized_detail = {}
+    _global_total_realized = 0.0
+
+    try:
+        all_activities = adapter.get_activities(limit=500)
+        _rebal_path = "logs/rebalance_history.json"
+        if os.path.exists(_rebal_path):
+            with open(_rebal_path, 'r') as f:
+                _global_rebal = json.load(f)
+
+        # Process activities chronologically: buys first then sells on same day
+        _sorted_acts = sorted(all_activities, key=lambda a: (a['date'], 0 if a['side'] == 'buy' else 1))
+        _pos_cost = {}  # {symbol: {total_value, total_qty}} — tracks avg cost basis
+
+        for act in _sorted_acts:
+            sym, d = act['symbol'], act['date']
+            if act['side'] == 'buy':
+                if sym not in _pos_cost:
+                    _pos_cost[sym] = {'total_value': 0.0, 'total_qty': 0.0}
+                _pos_cost[sym]['total_value'] += act['qty'] * act['price']
+                _pos_cost[sym]['total_qty'] += act['qty']
+            elif act['side'] == 'sell':
+                sp, sq = act['price'], act['qty']
+                # Get entry price from tracked buy cost basis
+                if sym in _pos_cost and _pos_cost[sym]['total_qty'] > 0.001:
+                    ep = _pos_cost[sym]['total_value'] / _pos_cost[sym]['total_qty']
+                    cost_rm = ep * min(sq, _pos_cost[sym]['total_qty'])
+                    _pos_cost[sym]['total_value'] -= cost_rm
+                    _pos_cost[sym]['total_qty'] -= sq
+                    if _pos_cost[sym]['total_qty'] < 0.001:
+                        del _pos_cost[sym]
+                else:
+                    # Fallback: find entry from earliest rebalance snapshot
+                    ep = sp
+                    for snap in _global_rebal:
+                        if sym in snap.get('positions', {}):
+                            ep = snap['positions'][sym].get('entry_price', sp)
+                            break
+
+                pnl = (sp - ep) * sq
+                _global_total_realized += pnl
+
+                # Per-date aggregate for equity chart
+                _global_realized_by_date.setdefault(d, 0.0)
+                _global_realized_by_date[d] += pnl
+
+                # Per-date per-symbol detail for day cards
+                if d not in _global_realized_detail:
+                    _global_realized_detail[d] = {}
+                if sym not in _global_realized_detail[d]:
+                    _global_realized_detail[d][sym] = {
+                        'sell_value': 0.0, 'sell_qty': 0.0,
+                        'entry_price': ep, 'realized': 0.0
+                    }
+                _global_realized_detail[d][sym]['sell_value'] += sp * sq
+                _global_realized_detail[d][sym]['sell_qty'] += sq
+                _global_realized_detail[d][sym]['realized'] += pnl
+    except Exception:
+        pass
+
+    # --- Dashboard Metrics ---
     col1, col2, col3, col4 = st.columns(4)
-    
     current_equity = acct.get('equity', 0.0)
     buying_power = acct.get('buying_power', 0.0)
-    
-    # Placeholder for P&L (Alpaca doesn't give daily P&L history in simple account call, requires portfolio history)
-    # For now, we show Equity and Buying Power
-    
+
     col1.metric("Total Equity", f"${current_equity:,.2f}")
     col2.metric("Buying Power", f"${buying_power:,.2f}")
     col3.metric("Status", acct.get('status', 'Unknown'))
-    col4.metric("Currency", acct.get('currency', 'USD'))
+    _rpl_color = "normal" if _global_total_realized >= 0 else "inverse"
+    col4.metric("Total Realized P&L", f"${_global_total_realized:+,.2f}", delta=f"${_global_total_realized:+,.2f}", delta_color=_rpl_color)
     
     st.subheader("Equity Curve")
 
@@ -84,39 +148,8 @@ if page == "Dashboard":
         if not hist_df.empty:
             from plotly.subplots import make_subplots
 
-            # Build cumulative realized gain (profit/loss, not proceeds)
-            # Need entry prices from rebalance_history to compute actual gain
-            eq_activities = adapter.get_activities(limit=500)
-
-            _rebal_path = "logs/rebalance_history.json"
-            _rebal_data = []
-            if os.path.exists(_rebal_path):
-                try:
-                    with open(_rebal_path, 'r') as f:
-                        _rebal_data = json.load(f)
-                except Exception:
-                    _rebal_data = []
-
-            # Build entry price lookup: {date: {symbol: entry_price}} from previous day's snapshot
-            _entry_prices_by_date = {}
-            for ri in range(1, len(_rebal_data)):
-                d = _rebal_data[ri].get('rebalance_date', '')
-                prev_positions = _rebal_data[ri - 1].get('positions', {})
-                _entry_prices_by_date[d] = {sym: info.get('entry_price', 0) for sym, info in prev_positions.items()}
-
-            # Aggregate sells by date, compute realized P&L = (sell_price - entry_price) * qty
-            realized_by_date = {}
-            for act in eq_activities:
-                if act['side'] == 'sell':
-                    d = act['date']
-                    sym = act['symbol']
-                    sell_price = act['price']
-                    sell_qty = act['qty']
-                    # Look up entry price from rebalance history
-                    entry_price = _entry_prices_by_date.get(d, {}).get(sym, sell_price)
-                    realized_pnl = (sell_price - entry_price) * sell_qty
-                    realized_by_date.setdefault(d, 0.0)
-                    realized_by_date[d] += realized_pnl
+            # Reuse precomputed realized gains (computed once at page load)
+            realized_by_date = _global_realized_by_date
 
             # Build daily realized gain/loss series aligned to equity dates
             eq_dates = [ts.strftime('%Y-%m-%d') if hasattr(ts, 'strftime') else str(ts)[:10] for ts in hist_df.index]
@@ -153,12 +186,15 @@ if page == "Dashboard":
                 fillcolor='rgba(0, 204, 150, 0.1)'
             ), row=1, col=1)
 
-            # Row 2: Gain bars (green) + Loss bars (red)
+            # Row 2: Gain bars (green) + Loss bars (red), display 2 decimal places
             fig_eq.add_trace(go.Bar(
                 x=hist_df.index,
                 y=daily_gains,
                 name='Realized Gain',
                 marker_color='rgba(0, 204, 136, 0.8)',
+                text=[f"${v:.2f}" if v > 0 else "" for v in daily_gains],
+                textposition='outside',
+                hovertemplate='%{x|%Y-%m-%d}<br>Gain: $%{y:.2f}<extra></extra>',
             ), row=2, col=1)
 
             fig_eq.add_trace(go.Bar(
@@ -166,6 +202,9 @@ if page == "Dashboard":
                 y=daily_losses,
                 name='Realized Loss',
                 marker_color='rgba(255, 75, 75, 0.8)',
+                text=[f"-${abs(v):.2f}" if v < 0 else "" for v in daily_losses],
+                textposition='outside',
+                hovertemplate='%{x|%Y-%m-%d}<br>Loss: $%{y:.2f}<extra></extra>',
             ), row=2, col=1)
 
             # Calculate Y-axis range with padding for equity
@@ -501,7 +540,7 @@ if page == "Dashboard":
                                                     res_df['equity'] = res_df['equity'] * scale
 
                                                 color = seg_colors[seg_i % len(seg_colors)]
-                                                factors_str = ", ".join(cfg.get('active_factors', [])[:3])
+                                                factors_str = ", ".join(cfg.get('active_factors', []))
                                                 fig_bt.add_trace(go.Scatter(
                                                     x=res_df.index,
                                                     y=res_df['equity'],
@@ -514,54 +553,7 @@ if page == "Dashboard":
                                     import traceback
                                     st.caption(traceback.format_exc())
 
-                            # --- Overlay real trade fills as markers ---
-                            try:
-                                _trade_fills = adapter.get_activities(limit=500)
-                                if _trade_fills:
-                                    # Build equity lookup: date_str -> equity value
-                                    _eq_lookup = {}
-                                    for ts, row in actual_hist.iterrows():
-                                        d_str = ts.strftime('%Y-%m-%d') if hasattr(ts, 'strftime') else str(ts)[:10]
-                                        _eq_lookup[d_str] = float(row['equity'])
 
-                                    buy_dates, buy_eq, buy_texts = [], [], []
-                                    sell_dates, sell_eq, sell_texts = [], [], []
-
-                                    for fill in _trade_fills:
-                                        d = fill['date']
-                                        eq_val = _eq_lookup.get(d)
-                                        if eq_val is None:
-                                            continue
-                                        label = f"{fill['symbol']} x{fill['qty']:.1f} @ ${fill['price']:.2f}"
-                                        if fill['side'] == 'buy':
-                                            buy_dates.append(pd.Timestamp(d))
-                                            buy_eq.append(eq_val)
-                                            buy_texts.append(label)
-                                        else:
-                                            sell_dates.append(pd.Timestamp(d))
-                                            sell_eq.append(eq_val)
-                                            sell_texts.append(label)
-
-                                    if buy_dates:
-                                        fig_bt.add_trace(go.Scatter(
-                                            x=buy_dates, y=buy_eq,
-                                            mode='markers',
-                                            name='Buy Fills',
-                                            marker=dict(symbol='triangle-up', size=10, color='#00CC96',
-                                                        line=dict(width=1, color='white')),
-                                            text=buy_texts, hoverinfo='text+x'
-                                        ))
-                                    if sell_dates:
-                                        fig_bt.add_trace(go.Scatter(
-                                            x=sell_dates, y=sell_eq,
-                                            mode='markers',
-                                            name='Sell Fills',
-                                            marker=dict(symbol='triangle-down', size=10, color='#FF4B4B',
-                                                        line=dict(width=1, color='white')),
-                                            text=sell_texts, hoverinfo='text+x'
-                                        ))
-                            except Exception as _te:
-                                pass  # Trade markers are optional, don't break chart
 
                             fig_bt.update_layout(
                                 template='plotly_dark',
@@ -601,43 +593,13 @@ if page == "Dashboard":
                 daily_pl[d] = float(row.get('profit_loss', 0) or 0)
                 daily_pl_pct[d] = float(row.get('profit_loss_pct', 0) or 0)
 
-        # Actual fills from Alpaca activities
-        activities = adapter.get_activities(limit=500)
+        # Reuse precomputed activities and realized gains
         fills_by_date = {}
-        for act in activities:
+        for act in all_activities:
             d = act['date']
             fills_by_date.setdefault(d, []).append(act)
 
-        # Load rebalance_history for realized gain calculation
-        rebal_history = []
-        rebal_history_path = "logs/rebalance_history.json"
-        if os.path.exists(rebal_history_path):
-            try:
-                with open(rebal_history_path, 'r') as f:
-                    rebal_history = json.load(f)
-            except Exception:
-                rebal_history = []
-
-        # Build lookup: date -> snapshot positions, and date -> previous day snapshot
-        rebal_by_date = {}
-        rebal_prev = {}  # date -> previous snapshot's positions
-        for i, snap in enumerate(rebal_history):
-            d = snap.get('rebalance_date', '')
-            rebal_by_date[d] = snap.get('positions', {})
-            if i > 0:
-                rebal_prev[d] = rebal_history[i - 1].get('positions', {})
-
-        # Build sell prices from activities: date -> {symbol: avg_sell_price}
-        sell_prices_by_date = {}
-        for act in activities:
-            if act['side'] == 'sell':
-                d = act['date']
-                sell_prices_by_date.setdefault(d, {})
-                sym = act['symbol']
-                if sym not in sell_prices_by_date[d]:
-                    sell_prices_by_date[d][sym] = {'total_value': 0.0, 'total_qty': 0.0}
-                sell_prices_by_date[d][sym]['total_value'] += act['qty'] * act['price']
-                sell_prices_by_date[d][sym]['total_qty'] += act['qty']
+        realized_gains_detail = _global_realized_detail
 
         all_dates = sorted(set(daily_pl.keys()) | set(fills_by_date.keys()), reverse=True)
 
@@ -721,42 +683,31 @@ if page == "Dashboard":
                     else:
                         st.caption("No trades executed on this day.")
 
-                    # Realized Gains: compare today's rebalance vs previous day's snapshot
-                    prev_positions = rebal_prev.get(d_str, {})
-                    today_positions = rebal_by_date.get(d_str, {})
-                    day_sell_prices = sell_prices_by_date.get(d_str, {})
-
-                    if prev_positions:
-                        # Stocks in previous snapshot but NOT in today's = fully exited
-                        exited_syms = set(prev_positions.keys()) - set(today_positions.keys())
+                    # Realized Gains: show on the day sells happened, using actual fill prices
+                    day_realized = realized_gains_detail.get(d_str, {})
+                    if day_realized:
                         realized_lines = []
                         total_realized = 0.0
 
-                        for sym in sorted(exited_syms):
-                            entry_info = prev_positions[sym]
-                            entry_price = entry_info.get('entry_price', 0)
-                            qty = entry_info.get('qty', 0)
-                            # Use actual sell price from activities if available
-                            if sym in day_sell_prices and day_sell_prices[sym]['total_qty'] > 0:
-                                sell_price = day_sell_prices[sym]['total_value'] / day_sell_prices[sym]['total_qty']
-                                sell_qty = day_sell_prices[sym]['total_qty']
-                            else:
-                                sell_price = entry_price  # fallback
-                                sell_qty = qty
-                            realized = (sell_price - entry_price) * sell_qty
+                        for sym in sorted(day_realized.keys()):
+                            info = day_realized[sym]
+                            sell_price = info['sell_value'] / info['sell_qty'] if info['sell_qty'] > 0 else 0
+                            entry_price = info['entry_price']
+                            sell_qty = info['sell_qty']
+                            realized = info['realized']
                             total_realized += realized
                             r_color = "#00CC88" if realized >= 0 else "#FF4B4B"
-                            r_icon = "+" if realized >= 0 else ""
+                            r_sign = "+" if realized >= 0 else "-"
                             realized_lines.append(
                                 f"<span style='color:{r_color}'><b>{sym}</b>: "
                                 f"x{sell_qty:g} sold @ &#36;{sell_price:.2f} (entry &#36;{entry_price:.2f}) "
-                                f"= {r_icon}&#36;{abs(realized):,.2f}</span>"
+                                f"= {r_sign}&#36;{abs(realized):,.2f}</span>"
                             )
 
                         if realized_lines:
                             st.markdown("---")
                             total_color = "#00CC88" if total_realized >= 0 else "#FF4B4B"
-                            total_sign = "+" if total_realized >= 0 else ""
+                            total_sign = "+" if total_realized >= 0 else "-"
                             st.markdown(
                                 f"**Realized Gains** &nbsp; | &nbsp; "
                                 f"<span style='color:{total_color};font-weight:bold'>"
