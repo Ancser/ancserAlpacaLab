@@ -32,68 +32,61 @@ class LiveStrategy:
         leverage_cap = config.get('leverage', 1.0)
         
         # We need history for both Vol and Factors
-        # Fetch 60 days to be safe (Factors need ~20-50 days, Vol needs ~20 days)
+        # Momentum requires 252 trading days (~365 calendar days), plus buffer, so we fetch 400 days.
         end_dt = datetime.now()
-        start_dt = end_dt - timedelta(days=90)
+        start_dt = end_dt - timedelta(days=400)
         
         try:
-            # Re-use BacktestEngine's robust fetcher but for Alpaca source
-            # Or just use adapter directly to get Polars DataFrame
             hist_pl = self.alpaca.fetch_history(universe, start_dt.strftime('%Y-%m-%d'), end_dt.strftime('%Y-%m-%d')).collect()
             
             if hist_pl.is_empty():
                  return {"error": "No historical data fetched"}
                  
+            # 2. Factor Calculation using unified polars factors
+            from ancser_quant.alpha.factors import compute_all_factors
+            
+            factor_df_pl = compute_all_factors(hist_pl.lazy()).collect()
+            factor_df = factor_df_pl.to_pandas()
+            factor_df['timestamp'] = pd.to_datetime(factor_df['timestamp'])
+             
+            # Pivot prices for Volatility Targeting and latest_prices
             hist = hist_pl.to_pandas()
             hist['timestamp'] = pd.to_datetime(hist['timestamp'])
-             
-            # Calculate Volatility Scalar
-            # 2. Factor Calculation
-            # Get latest available data for each symbol
-            # We need to construct a DataFrame similar to what BacktestEngine uses
-            
-            # Pivot prices
             closes = hist.pivot(index='timestamp', columns='symbol', values='close')
+            
+            # Get latest available data for each symbol
+            latest_date = factor_df['timestamp'].max()
+            latest_data = factor_df[factor_df['timestamp'] == latest_date].set_index('symbol')
             
             # Initialize scores
             scores = pd.Series(0.0, index=closes.columns)
             
-            # Simple Equal Weight per Factor for now (or load from config)
-            # In BacktestEngine, we use MWU weights if enabled. 
-            # For simplicity in Live Preview, let's assume Equal Weight across selected factors.
+            # Factor directions mapping
+            col_map = {
+                'Momentum': 'factor_ts_mom',
+                'Reversion': 'factor_rsi',
+                'Skew': 'factor_skew',
+                'Microstructure': 'factor_amihud',
+                'Alpha 101': 'factor_alpha006',
+                'Volatility': 'factor_ivol',
+                'Drift-Reversion': 'factor_rsi_filtered',
+                'Unicorn Edge': 'factor_unicorn_edge',
+            }
+            descending_factors = {'Reversion', 'Volatility', 'Microstructure', 'Drift-Reversion'}
+            
             weight_per_factor = 1.0 / len(factors)
             
             for f in factors:
-                factor_rank = pd.Series(0.0, index=closes.columns)
+                if f not in col_map:
+                    continue
+                col_name = col_map[f]
                 
-                if f == 'Momentum':
-                    # ROC 126 (6-month)
-                    mom = closes.pct_change(126).iloc[-1]
-                    factor_rank = mom.rank(pct=True, ascending=True)
-                    
-                elif f == 'Reversion':
-                    # 5-day RSI (via -ReturnValue)
-                    rev = closes.pct_change(5).iloc[-1]
-                    factor_rank = rev.rank(pct=True, ascending=False) # Lower return -> Higher rank
-                    
-                elif f == 'Volatility':
-                    # 20-day Vol (Lower is better)
-                    vol = closes.pct_change().tail(20).std()
-                    factor_rank = vol.rank(pct=True, ascending=False)
-                    
-                elif f == 'Skew':
-                    # 60-day Skew (Higher is better)
-                    skew = closes.pct_change().tail(60).skew()
-                    factor_rank = skew.rank(pct=True, ascending=True)
-                
-                elif f == 'Microstructure':
-                    # Amihud Illiquidity (High Volume/Return ratio - complicated for just price data)
-                    # Proxy: Lower Volume Variance? Or just 1-day Reversion
-                    # Let's use 1-day Reversion as placeholder for Microstructure
-                    rev1 = closes.pct_change(1).iloc[-1]
-                    factor_rank = rev1.rank(pct=True, ascending=False)
-
-                scores += factor_rank.fillna(0.5) * weight_per_factor
+                if col_name in latest_data.columns:
+                    # Some symbols might be missing in latest_data because of NaNs, map to closes.columns
+                    factor_vals = latest_data[col_name].reindex(closes.columns)
+                    ascending = f not in descending_factors
+                    factor_rank = factor_vals.rank(pct=True, ascending=ascending)
+                    scores += factor_rank.fillna(0.5) * weight_per_factor
 
             # 3. Portfolio Construction
             # Select Top 5 Stocks

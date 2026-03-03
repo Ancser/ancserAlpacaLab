@@ -487,7 +487,7 @@ if page == "Dashboard":
                                 initial_eq = float(actual_hist['equity'].iloc[0])
 
                             seg_colors = ['#AA88FF', '#FF8888', '#88CCFF', '#FFAA44']
-                            FACTOR_LOOKBACK_DAYS = 90  # Buffer for factor warm-up (momentum, RSI, etc.)
+                            FACTOR_LOOKBACK_DAYS = 400  # Buffer for factor warm-up (momentum, RSI, etc.)
 
                             for seg_i, seg in enumerate(segments):
                                 cfg = seg['config'] or fallback_cfg
