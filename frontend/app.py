@@ -912,7 +912,8 @@ elif page == "Backtest":
     col_exec1, col_exec2 = st.columns(2)
 
     # Save Config Button
-    if col_exec1.button("💾 Save Config", type="secondary", help="Save current configuration to config/live_strategy.json"):
+    btn_label = f"💾 Save Config for [{selected_account}]"
+    if col_exec1.button(btn_label, type="secondary", help=f"Save current configuration for account '{selected_account}'"):
         import json
         import os
 
