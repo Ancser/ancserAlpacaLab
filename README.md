@@ -108,9 +108,16 @@ This will install all required Python packages including Polars, Streamlit, and 
 Create a `.env` file in the root directory with your Alpaca API credentials:
 
 ```env
+# Default 'Main' Account
 APCA_API_KEY_ID=your_api_key
 APCA_API_SECRET_KEY=your_secret_key
+
+# Additional Account (e.g., 'Test')
+APCA_API_KEY_ID_TEST=your_second_api_key
+APCA_API_SECRET_KEY_TEST=your_second_secret_key
 ```
+
+> **Multi-Account Support**: The system dynamically scans your `.env` for variables ending in custom suffixes (like `_TEST`). You can seamlessly switch between these accounts in the Dashboard sidebar, assign them different strategies, and `daily_run.bat` will automatically execute all of them in sequential order without conflicts!
 
 **Get Free Alpaca Account**: Register at [https://alpaca.markets/](https://alpaca.markets/) - Free paper trading account with real-time data.
 
@@ -379,9 +386,16 @@ This software is for educational and research purposes only. Quantitative tradin
 在根目錄創建 `.env` 檔案，填入您的 Alpaca API 憑證：
 
 ```env
+# 預設 'Main' 主帳戶
 APCA_API_KEY_ID=your_api_key
 APCA_API_SECRET_KEY=your_secret_key
+
+# 額外的新帳戶 (例如：命名為 'Test')
+APCA_API_KEY_ID_TEST=your_second_api_key
+APCA_API_SECRET_KEY_TEST=your_second_secret_key
 ```
+
+> **多帳戶無縫支援 (Multi-Account Support)**：系統會自動掃描 `.env` 檔結尾帶有自訂代號（如 `_TEST`）的金鑰。您可以直接在 Dashboard 左側選單無縫切換不同帳戶，並為它們指派截然不同的策略。`daily_run.bat` 每天啟動時會自動且安全地依序執行所有帳戶的交易，彼此資料與資金完全隔離，絕不衝突！
 
 **獲取免費 Alpaca 帳戶**：在 [https://alpaca.markets/](https://alpaca.markets/) 註冊 - 免費模擬交易帳戶，提供實時數據。
 
