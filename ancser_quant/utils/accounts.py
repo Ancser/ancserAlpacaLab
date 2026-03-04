@@ -20,11 +20,13 @@ def get_configured_accounts() -> List[str]:
         if key.startswith("APCA_API_KEY_ID_"):
             suffix = key.replace("APCA_API_KEY_ID_", "")
             
-            # If the matching secret exists
-            secret_key_var = f"APCA_API_SECRET_KEY_{suffix}"
-            if os.getenv(secret_key_var):
-                # We can formalize the account name. E.g. TEST -> Test
-                acc_name = suffix.capitalize()
+            # If the matching secret exists (handle both _SECRET_KEY_ and _SECRET_ formatting)
+            secret_key_var1 = f"APCA_API_SECRET_KEY_{suffix}"
+            secret_key_var2 = f"APCA_API_SECRET_{suffix}"
+            
+            if os.getenv(secret_key_var1) or os.getenv(secret_key_var2):
+                # We can formalize the account name. E.g. MWU4Factor -> mwu4factor -> MWU4Factor
+                acc_name = suffix
                 # Default APCA_API_KEY_ID_MAIN could clash with "Main", avoid duplicates
                 if acc_name.lower() == "main":
                     acc_name = "Main"

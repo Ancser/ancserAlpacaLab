@@ -21,7 +21,11 @@ class AlpacaAdapter:
     def __init__(self, account_name: str = "Main"):
         self.account_name = account_name
         self.api_key = os.getenv("APCA_API_KEY_ID") if account_name == "Main" else os.getenv(f"APCA_API_KEY_ID_{account_name.upper()}")
-        self.secret_key = os.getenv("APCA_API_SECRET_KEY") if account_name == "Main" else os.getenv(f"APCA_API_SECRET_KEY_{account_name.upper()}")
+        
+        if account_name == "Main":
+            self.secret_key = os.getenv("APCA_API_SECRET_KEY")
+        else:
+            self.secret_key = os.getenv(f"APCA_API_SECRET_KEY_{account_name.upper()}") or os.getenv(f"APCA_API_SECRET_{account_name.upper()}")
         
         # Fallback if user named it MAIN strictly inside env vars
         if not self.api_key and account_name.upper() == "MAIN":
