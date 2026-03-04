@@ -525,9 +525,9 @@
         "ZS",
         "ZTS"
     ],
-    "use_mwu": false,
+    "use_mwu": true,
     "use_vol_target": true,
     "vol_target": 0.2,
     "strategy_mode": "long_only",
-    "last_updated": "2026-02-21T16:59:18.845630"
+    "last_updated": "2026-03-03T13:38:10.692008"
 }

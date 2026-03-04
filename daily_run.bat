@@ -10,4 +10,4 @@ if exist .env (
     )
 )
 
-"%PYTHON_EXEC%" -m ancser_quant.execution.main_loop --run-once
+start "ancserAlpacaLab Daily" "%PYTHON_EXEC%" -m ancser_quant.execution.main_loop --run-once

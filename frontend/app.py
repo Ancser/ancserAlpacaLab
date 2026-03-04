@@ -23,6 +23,13 @@ st.title("ancserAlpacaLab")
 # Sidebar Navigation
 page = st.sidebar.radio("Navigation", ["Dashboard", "Backtest"])
 
+from ancser_quant.utils.accounts import get_configured_accounts
+available_accounts = get_configured_accounts()
+
+st.sidebar.markdown("---")
+# Inject Account Context Selector
+selected_account = st.sidebar.selectbox("🔑 Account", available_accounts, index=0)
+
 # Display Log File Location
 st.sidebar.markdown("---")
 st.sidebar.caption(f"📝 Error Log: `{log_file}`")
@@ -46,10 +53,10 @@ if page == "Dashboard":
     # Fetch Real Data
     from ancser_quant.data.alpaca_adapter import AlpacaAdapter
     try:
-        adapter = AlpacaAdapter()
+        adapter = AlpacaAdapter(account_name=selected_account)
         acct = adapter.get_account()
     except Exception as e:
-        st.error(f"Failed to connect to Alpaca: {e}")
+        st.error(f"Failed to connect to Alpaca Account [{selected_account}]: {e}")
         acct = {'equity': 0.0, 'buying_power': 0.0}
 
     # --- Load all activities & rebalance data ONCE, compute realized gains ONCE ---
@@ -63,7 +70,8 @@ if page == "Dashboard":
 
     try:
         all_activities = adapter.get_activities(limit=500)
-        _rebal_path = "logs/rebalance_history.json"
+        _rebal_path = f"logs/rebalance_history_{selected_account}.json" if selected_account != "Main" else "logs/rebalance_history.json"
+        
         if os.path.exists(_rebal_path):
             with open(_rebal_path, 'r') as f:
                 _global_rebal = json.load(f)
@@ -316,7 +324,9 @@ if page == "Dashboard":
     st.subheader("Live Strategy Configuration & Preview")
 
     # Load current live strategy config
-    config_path = "config/live_strategy.json"
+    config_path = f"config/live_strategy_{selected_account}.json" if selected_account != "Main" else "config/live_strategy.json"
+    if not os.path.exists(config_path) and selected_account != "Main":
+        config_path = "config/live_strategy.json"
 
     try:
         if os.path.exists(config_path):
@@ -340,7 +350,7 @@ if page == "Dashboard":
             with st.spinner("Calculating target portfolio..."):
                 from ancser_quant.execution.strategy import LiveStrategy
 
-                strat = LiveStrategy()
+                strat = LiveStrategy(account_name=selected_account)
                 res = strat.calculate_targets(live_config)
 
                 if "error" in res:
@@ -386,8 +396,10 @@ if page == "Dashboard":
     st.subheader("Strategy Performance: Backtest vs Live")
 
     try:
-        _rebal_history_path = "logs/rebalance_history.json"
-        _config_path = "config/live_strategy.json"
+        _rebal_history_path = f"logs/rebalance_history_{selected_account}.json" if selected_account != "Main" else "logs/rebalance_history.json"
+        _config_path = f"config/live_strategy_{selected_account}.json" if selected_account != "Main" else "config/live_strategy.json"
+        if not os.path.exists(_config_path) and selected_account != "Main":
+            _config_path = "config/live_strategy.json"
 
         if os.path.exists(_rebal_history_path) and os.path.exists(_config_path):
             with open(_rebal_history_path, 'r') as f:
@@ -395,48 +407,9 @@ if page == "Dashboard":
             with open(_config_path, 'r') as f:
                 _live_cfg = json.load(f)
 
-            if len(_rebal_hist) >= 2:
-                # Group rebalance entries into segments by strategy config
-                def _config_key(cfg):
-                    """Create a hashable key from strategy config."""
-                    if cfg is None:
-                        return None
-                    return (
-                        tuple(sorted(cfg.get('active_factors', []))),
-                        cfg.get('use_mwu', False),
-                        cfg.get('leverage', 1.0),
-                        cfg.get('use_vol_target', False),
-                        cfg.get('vol_target', 0.20),
-                        cfg.get('strategy_mode', 'long_only'),
-                    )
-
-                segments = []  # list of {start_date, end_date, config}
-                current_cfg = _rebal_hist[0].get('strategy_config', None)
-                seg_start = _rebal_hist[0]['rebalance_date']
-
-                for i in range(1, len(_rebal_hist)):
-                    entry = _rebal_hist[i]
-                    entry_cfg = entry.get('strategy_config', None)
-                    if _config_key(entry_cfg) != _config_key(current_cfg):
-                        # Strategy changed: close previous segment
-                        segments.append({
-                            'start_date': seg_start,
-                            'end_date': _rebal_hist[i - 1]['rebalance_date'],
-                            'config': current_cfg
-                        })
-                        seg_start = entry['rebalance_date']
-                        current_cfg = entry_cfg
-
-                # Close final segment (end = yesterday)
-                yesterday = (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')
-                segments.append({
-                    'start_date': seg_start,
-                    'end_date': yesterday,
-                    'config': current_cfg
-                })
-
-                # For segments without saved config, fall back to current live config
-                fallback_cfg = {
+            if len(_rebal_hist) >= 1:
+                # Use current live config as the single source of truth for the overlay
+                current_cfg = {
                     'active_factors': _live_cfg.get('active_factors', []),
                     'use_mwu': _live_cfg.get('use_mwu', False),
                     'leverage': _live_cfg.get('leverage', 1.0),
@@ -444,138 +417,120 @@ if page == "Dashboard":
                     'vol_target': _live_cfg.get('vol_target', 0.20),
                     'strategy_mode': _live_cfg.get('strategy_mode', 'long_only'),
                 }
-
-                # Get actual equity curve from Alpaca
-                earliest_date = _rebal_hist[0]['rebalance_date']
-                # Calculate period needed
-                days_diff = (datetime.today() - datetime.strptime(earliest_date, '%Y-%m-%d')).days
-                if days_diff <= 30:
-                    _period = "1M"
-                elif days_diff <= 90:
-                    _period = "3M"
-                elif days_diff <= 365:
-                    _period = "1A"
+                
+                universe = _live_cfg.get('universe', [])
+                if not universe:
+                    st.warning("No universe in live config.")
                 else:
-                    _period = "5A"
+                    # Determine start and end date of the Actual Live Equity
+                    earliest_date = _rebal_hist[0]['rebalance_date']
+                    yesterday = (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')
+                    
+                    days_diff = (datetime.today() - datetime.strptime(earliest_date, '%Y-%m-%d')).days
+                    if days_diff <= 30:
+                        _period = "1M"
+                    elif days_diff <= 90:
+                        _period = "3M"
+                    elif days_diff <= 365:
+                        _period = "1A"
+                    else:
+                        _period = "5A"
 
-                actual_hist = adapter.get_portfolio_history(period=_period)
+                    # Fetch real live actual equity curve
+                    actual_hist = adapter.get_portfolio_history(period=_period)
 
-                if not actual_hist.empty:
-                    with st.spinner("Running backtest comparison (Alpaca data)..."):
-                        from ancser_quant.backtest import BacktestEngine
-
-                        universe = _live_cfg.get('universe', [])
-                        if not universe:
-                            st.warning("No universe in live config.")
-                        else:
-                            # Run backtest for each segment and stitch together
+                    if not actual_hist.empty:
+                        with st.spinner("Running unified backtest comparison against current strategy..."):
+                            from ancser_quant.backtest import BacktestEngine
+                            
                             fig_bt = go.Figure()
-
-                            # Plot actual equity (solid green)
+                            # 1. Plot Actual Equity (Green Line)
                             fig_bt.add_trace(go.Scatter(
                                 x=actual_hist.index,
                                 y=actual_hist['equity'],
                                 mode='lines',
-                                name='Actual (Live)',
+                                name='Actual (Live Account)',
                                 line=dict(color='#00CC96', width=2.5)
                             ))
 
-                            # Initial capital from first rebalance snapshot
-                            first_snap = _rebal_hist[0]
-                            initial_eq = sum(p.get('value', 0) for p in first_snap.get('positions', {}).values())
-                            if initial_eq <= 0:
-                                initial_eq = float(actual_hist['equity'].iloc[0])
+                            actual_start_val = float(actual_hist['equity'].iloc[0])
+                            actual_start_date = actual_hist.index[0].strftime('%Y-%m-%d')
 
-                            seg_colors = ['#AA88FF', '#FF8888', '#88CCFF', '#FFAA44']
-                            FACTOR_LOOKBACK_DAYS = 400  # Buffer for factor warm-up (momentum, RSI, etc.)
+                            try:
+                                FACTOR_LOOKBACK_DAYS = 400
+                                buffer_start = (datetime.strptime(actual_start_date, '%Y-%m-%d') - timedelta(days=FACTOR_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
 
-                            for seg_i, seg in enumerate(segments):
-                                cfg = seg['config'] or fallback_cfg
-                                s_date = seg['start_date']
-                                e_date = seg['end_date']
-
-                                if s_date >= e_date:
-                                    continue
-
-                                # Determine initial capital for this segment from actual equity
-                                seg_actual = actual_hist[actual_hist.index >= pd.Timestamp(s_date)]
-                                if seg_actual.empty:
-                                    continue
-                                seg_init_eq = float(seg_actual['equity'].iloc[0])
-
-                                try:
-                                    # Fetch data with lookback buffer so factors can compute
-                                    buffer_start = (datetime.strptime(s_date, '%Y-%m-%d') - timedelta(days=FACTOR_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
-
-                                    engine = BacktestEngine(
-                                        initial_capital=100000,
-                                        data_source='alpaca'  # Use Alpaca data for consistency with live
+                                engine = BacktestEngine(
+                                    initial_capital=actual_start_val,
+                                    data_source='alpaca'
+                                )
+                                data = engine.fetch_and_prepare_data(
+                                    universe, buffer_start, yesterday
+                                )
+                                
+                                if data is not None and not data.empty:
+                                    res_df, w_df, _ = engine.run_simulation(
+                                        data,
+                                        active_factors=current_cfg.get('active_factors', []),
+                                        leverage=current_cfg.get('leverage', 1.0),
+                                        use_mwu=current_cfg.get('use_mwu', False),
+                                        use_vol_target=current_cfg.get('use_vol_target', False),
+                                        vol_target_pct=current_cfg.get('vol_target', 0.20),
+                                        strategy_mode=current_cfg.get('strategy_mode', 'long_only'),
                                     )
-                                    data = engine.fetch_and_prepare_data(
-                                        universe, buffer_start, e_date
-                                    )
-                                    if data is not None and not data.empty:
-                                        res_df, w_df, _ = engine.run_simulation(
-                                            data,
-                                            active_factors=cfg.get('active_factors', fallback_cfg['active_factors']),
-                                            leverage=cfg.get('leverage', 1.0),
-                                            use_mwu=cfg.get('use_mwu', False),
-                                            use_vol_target=cfg.get('use_vol_target', False),
-                                            vol_target_pct=cfg.get('vol_target', 0.20),
-                                            strategy_mode=cfg.get('strategy_mode', 'long_only'),
-                                        )
+
+                                    if not res_df.empty:
+                                        # Trim to match live actual timeline and tz
+                                        live_start_ts = pd.Timestamp(actual_start_date)
+                                        if res_df.index.tz is not None:
+                                            live_start_ts = live_start_ts.tz_localize(res_df.index.tz)
+                                        res_df = res_df[res_df.index >= live_start_ts]
 
                                         if not res_df.empty:
-                                            # Trim to live period only (handle tz-aware Alpaca timestamps)
-                                            live_start_ts = pd.Timestamp(s_date)
-                                            if res_df.index.tz is not None:
-                                                live_start_ts = live_start_ts.tz_localize(res_df.index.tz)
-                                            res_df = res_df[res_df.index >= live_start_ts]
+                                            # Rescale strictly to identical start point tracking
+                                            bt_start_val = float(res_df['equity'].iloc[0])
+                                            if bt_start_val > 0:
+                                                scale = actual_start_val / bt_start_val
+                                                res_df['equity'] = res_df['equity'] * scale
 
-                                            if not res_df.empty:
-                                                # Rescale equity so backtest starts at same level as live
-                                                bt_start_val = float(res_df['equity'].iloc[0])
-                                                if bt_start_val > 0:
-                                                    scale = seg_init_eq / bt_start_val
-                                                    res_df['equity'] = res_df['equity'] * scale
+                                            factors_str = ", ".join(current_cfg.get('active_factors', []))
+                                            # 2. Plot Backtest Equity (Dotted Line) using purely current configs 
+                                            fig_bt.add_trace(go.Scatter(
+                                                x=res_df.index,
+                                                y=res_df['equity'],
+                                                mode='lines',
+                                                name=f'Target Strategy Backtest<br>({factors_str})',
+                                                line=dict(color='#88CCFF', width=2, dash='dot')
+                                            ))
 
-                                                color = seg_colors[seg_i % len(seg_colors)]
-                                                factors_str = ", ".join(cfg.get('active_factors', []))
-                                                fig_bt.add_trace(go.Scatter(
-                                                    x=res_df.index,
-                                                    y=res_df['equity'],
-                                                    mode='lines',
-                                                    name=f'Backtest ({factors_str})',
-                                                    line=dict(color=color, width=2, dash='dot')
-                                                ))
-                                except Exception as seg_e:
-                                    st.caption(f"Segment {s_date}-{e_date} backtest failed: {seg_e}")
-                                    import traceback
-                                    st.caption(traceback.format_exc())
+                                fig_bt.update_layout(
+                                    template='plotly_dark',
+                                    hovermode='x unified',
+                                    margin=dict(l=0, r=0, t=40, b=0),
+                                    yaxis_title="Equity ($)",
+                                    xaxis_title="Date",
+                                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+                                )
+                                st.plotly_chart(fig_bt, width="stretch")
 
-
-
-                            fig_bt.update_layout(
-                                template='plotly_dark',
-                                hovermode='x unified',
-                                margin=dict(l=0, r=0, t=40, b=0),
-                                yaxis_title="Equity ($)",
-                                xaxis_title="Date",
-                                legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
-                            )
-                            st.plotly_chart(fig_bt, width="stretch")
-
-                            # Tracking delta metrics
-                            latest_actual = float(actual_hist['equity'].iloc[-1])
-                            st.caption(f"Live Equity: ${latest_actual:,.2f}")
-                else:
-                    st.info("No portfolio history available for comparison.")
+                                latest_actual = float(actual_hist['equity'].iloc[-1])
+                                latest_bt = float(res_df['equity'].iloc[-1]) if 'res_df' in locals() and not res_df.empty else latest_actual
+                                drift = latest_actual - latest_bt
+                                drift_color = "normal" if drift >= 0 else "inverse"
+                                st.metric("Live vs Target Tracking Difference", f"${latest_actual:,.2f}", delta=f"${drift:+,.2f}", delta_color=drift_color)
+                                
+                            except Exception as seg_e:
+                                st.error(f"Unified backtest comparison failed to render: {seg_e}")
+                                import traceback
+                                st.code(traceback.format_exc())
+                    else:
+                        st.info("No portfolio history available from Alpaca yet.")
             else:
-                st.info("Need at least 2 rebalance entries for comparison. Strategy will auto-populate as daily rebalances run.")
+                st.info("Need at least 1 rebalance history entry to anchor the comparison starting point.")
         else:
-            st.info("Waiting for rebalance history and live config to enable backtest comparison.")
+            st.info("Waiting for rebalance history and live config to enable unified backtest comparison.")
     except Exception as e:
-        st.error(f"Failed to run backtest comparison: {e}")
+        st.error(f"Failed to load backtest comparison: {e}")
         import traceback
         st.code(traceback.format_exc())
 
@@ -961,7 +916,7 @@ elif page == "Backtest":
         import json
         import os
 
-        config_path = "config/live_strategy.json"
+        config_path = f"config/live_strategy_{selected_account}.json" if selected_account != "Main" else "config/live_strategy.json"
         live_config = {
             "active_factors": factors,
             "leverage": leverage,
@@ -1033,7 +988,7 @@ elif page == "Backtest":
                 "vol_target": vol_target
             }
             
-            strat = LiveStrategy()
+            strat = LiveStrategy(account_name=selected_account)
             res = strat.calculate_targets(temp_config)
             
             if "error" in res:
@@ -1046,8 +1001,15 @@ elif page == "Backtest":
                     c1.metric("Market Vol (20d)", f"{vol['current_vol']:.2%}")
                     c2.metric("Target Vol", f"{vol.get('target_vol', 0):.2%}")
                     c3.metric("Leverage Scalar", f"{vol.get('final_scalar', 1.0):.2f}x", help=f"Raw: {vol.get('raw_scalar',0):.2f}x | Cap: {vol.get('leverage_cap',0)}x")
+                # 2. MWU Weights and Factors Status
+                factor_weights = res.get('factor_weights', {})
+                if use_mwu and factor_weights:
+                    st.markdown("##### MWU Dynamic Weights")
+                    w_cols = st.columns(len(factor_weights))
+                    for idx, (f_name, f_weight) in enumerate(factor_weights.items()):
+                        w_cols[idx].metric(f_name, f"{f_weight:.1%}")
                 
-                # 2. Target Allocation
+                # 3. Target Allocation
                 alloc = res.get('allocations', {})
                 prices = res.get('latest_prices', {})
                 scores = res.get('factor_scores', {})

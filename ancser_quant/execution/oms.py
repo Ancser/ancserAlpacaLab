@@ -16,8 +16,9 @@ class OrderManagementSystem:
     Takes Target Weights -> Generates Orders -> Submits to Alpaca.
     Orders are submitted as qty-based (shares), rounded to 2 decimal places.
     """
-    def __init__(self):
-        self.alpaca = AlpacaAdapter() # Use adapter for API access
+    def __init__(self, account_name: str = "Main"):
+        self.account_name = account_name
+        self.alpaca = AlpacaAdapter(account_name) # Use adapter for API access
 
     def generate_and_execute_orders(self, target_weights: dict, strategy_config: dict = None) -> list:
         """
@@ -155,6 +156,9 @@ class OrderManagementSystem:
 
         # Save rebalance snapshot: prices at execution time for dashboard P&L tracking
         try:
+            _snap_path = f"logs/last_rebalance_{self.account_name}.json" if self.account_name != "Main" else "logs/last_rebalance.json"
+            _hist_path = f"logs/rebalance_history_{self.account_name}.json" if self.account_name != "Main" else "logs/rebalance_history.json"
+            
             snapshot_positions = {}
             for sym in all_symbols:
                 qty = current_qtys.get(sym, 0.0)
@@ -182,22 +186,22 @@ class OrderManagementSystem:
                     "vol_target": strategy_config.get("vol_target", 0.20),
                     "strategy_mode": strategy_config.get("strategy_mode", "long_only"),
                 }
-            os.makedirs(os.path.dirname(REBALANCE_SNAPSHOT_PATH), exist_ok=True)
+            os.makedirs(os.path.dirname(_snap_path), exist_ok=True)
             # Write latest snapshot
-            with open(REBALANCE_SNAPSHOT_PATH, 'w') as f:
+            with open(_snap_path, 'w') as f:
                 json.dump(snapshot, f, indent=2)
             # Append to history (load existing, append, save)
             history = []
-            if os.path.exists(REBALANCE_HISTORY_PATH):
+            if os.path.exists(_hist_path):
                 try:
-                    with open(REBALANCE_HISTORY_PATH, 'r') as f:
+                    with open(_hist_path, 'r') as f:
                         history = json.load(f)
                 except Exception:
                     history = []
             # Avoid duplicate entries for the same date (overwrite same-day)
             history = [h for h in history if h.get('rebalance_date') != snapshot['rebalance_date']]
             history.append(snapshot)
-            with open(REBALANCE_HISTORY_PATH, 'w') as f:
+            with open(_hist_path, 'w') as f:
                 json.dump(history, f, indent=2)
             logger.info(f"Rebalance snapshot saved. History now has {len(history)} entries.")
         except Exception as snap_e:

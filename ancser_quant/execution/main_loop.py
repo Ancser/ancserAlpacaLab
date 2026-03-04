@@ -9,6 +9,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.executors.pool import ThreadPoolExecutor
 from ancser_quant.data.alpaca_adapter import AlpacaAdapter
 from ancser_quant.alpha.mwu import MWUEngine
+from ancser_quant.utils.accounts import get_configured_accounts
 
 # Logging Setup
 logger = logging.getLogger("AncserExecution")
@@ -60,32 +61,34 @@ def _remove_pid_file():
     except Exception:
         pass
 
-def _check_daily_lock() -> bool:
+def _check_daily_lock(account_name: str) -> bool:
     """
     Returns True if today's trade has already been executed (locked).
     Reads the lock file and compares date with today.
     """
     today = datetime.now().strftime('%Y-%m-%d')
-    if not os.path.exists(DAILY_LOCK_PATH):
+    path = f"logs/daily_trade_lock_{account_name}.json" if account_name != "Main" else "logs/daily_trade_lock.json"
+    if not os.path.exists(path):
         return False
     try:
-        with open(DAILY_LOCK_PATH, 'r') as f:
+        with open(path, 'r') as f:
             lock = json.load(f)
         return lock.get('last_trade_date') == today
     except Exception:
         return False
 
-def _write_daily_lock():
+def _write_daily_lock(account_name: str):
     """Write today's date to the lock file after a successful trade execution."""
-    os.makedirs(os.path.dirname(DAILY_LOCK_PATH), exist_ok=True)
+    path = f"logs/daily_trade_lock_{account_name}.json" if account_name != "Main" else "logs/daily_trade_lock.json"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     today = datetime.now().strftime('%Y-%m-%d')
     lock = {
         'last_trade_date': today,
         'executed_at': datetime.now().isoformat()
     }
-    with open(DAILY_LOCK_PATH, 'w') as f:
+    with open(path, 'w') as f:
         json.dump(lock, f, indent=2)
-    logger.info(f"Daily trade lock written for {today}.")
+    logger.info(f"Daily trade lock written for Account [{account_name}] on {today}.")
 
 class TitanEventLoop:
     """
@@ -113,164 +116,126 @@ class TitanEventLoop:
     def rebalance_check(self, force: bool = False):
         """
         Runs every hour (during trading hours).
-        Responsible for initiating the Factor Pipeline and Rebalancing Logic.
+        Responsible for initiating the Factor Pipeline and Rebalancing Logic for each Account.
         """
         logger.info("Checking for rebalance opportunity...")
-
-        # Daily trade lock: only allow one execution per calendar day
-        if _check_daily_lock():
-            today = datetime.now().strftime('%Y-%m-%d')
-            if force:
-                logger.warning(f"[DailyLock] Trade already executed today ({today}), but --force is set. Overriding lock.")
-            else:
-                logger.info(f"[DailyLock] Trade already executed today ({today}). Skipping rebalance.")
-                return
-
-        # 1. Load Live Strategy Config
-        config_path = "config/live_strategy.json"
-        if not os.path.exists(config_path):
-            logger.warning("No live strategy config found. Skipping.")
+        
+        accounts = get_configured_accounts()
+        if not accounts:
+            logger.error("No valid accounts configured. Aborting.")
             return
 
-        try:
-            with open(config_path, 'r') as f:
-                strategy_config = json.load(f)
+        for account_name in accounts:
+            logger.info(f"--- Processing Account: {account_name} ---")
             
-            logger.info(f"Loaded Strategy Config: {strategy_config}")
-            universe = strategy_config.get('universe', [])
-            factors = strategy_config.get('active_factors', [])
-            
-            if not universe or not factors:
-                logger.warning("Universe or Factors empty. Skipping.")
-                return
+            # Daily trade lock: only allow one execution per calendar day
+            if _check_daily_lock(account_name):
+                today = datetime.now().strftime('%Y-%m-%d')
+                if force:
+                    logger.warning(f"[DailyLock] Account {account_name} trade already executed today ({today}), but --force is set. Overriding lock.")
+                else:
+                    logger.info(f"[DailyLock] Account {account_name} trade already executed today ({today}). Skipping rebalance.")
+                    continue
 
-            # 2. Fetch Latest Data for Volatility Calculation (if enabled)
-            target_scalar = 1.0
-            use_vol_target = strategy_config.get('use_vol_target', False)
-            vol_target = strategy_config.get('vol_target', 0.20)
-            leverage_cap = strategy_config.get('leverage', 1.0)
-            
-            if use_vol_target:
-                logger.info(f"Volatility Targeting Enabled. Target: {vol_target:.1%}. Calculating current market vol...")
-                try:
-                    # Fetch 30 days of history for the universe to estimate recent volatility
-                    # Using Universe Equal Weight Volatility as Proxy for Portfolio Volatility (Robustness)
-                    end_dt = datetime.now()
-                    start_dt = end_dt - pd.Timedelta(days=45) # Buffer for 20 trading days
-                    
-                    # We utilize the unified adapter
-                    from ancser_quant.backtest import BacktestEngine # Re-use infrastructure if possible, or just adapter
-                    # Just use adapter directly
-                    hist_pl = self.alpaca.fetch_history(universe, start_dt.strftime('%Y-%m-%d'), end_dt.strftime('%Y-%m-%d')).collect()
-                    
-                    if not hist_pl.is_empty():
-                        hist = hist_pl.to_pandas()
-                        hist['timestamp'] = pd.to_datetime(hist['timestamp'])
-                        
-                        # Pivot to Close prices
-                        closes = hist.pivot(index='timestamp', columns='symbol', values='close')
-                        
-                        # Calculate daily returns
-                        rets = closes.pct_change().dropna()
-                        
-                        # Equal Weighted Universe Return
-                        univ_ret = rets.mean(axis=1)
-                        
-                        # Last 20 days vol
-                        if len(univ_ret) >= 20:
-                           recent_std = univ_ret.tail(20).std()
-                           current_vol = recent_std * (252 ** 0.5)
-                           
-                           if current_vol > 0.001:
-                               raw_scalar = vol_target / current_vol
-                               target_scalar = min(leverage_cap, raw_scalar)
-                               logger.info(f"Market Vol (20d): {current_vol:.2%}. Target: {vol_target:.0%}. Scalar: {target_scalar:.2f}x")
-                           else:
-                               target_scalar = leverage_cap
-                        else:
-                            logger.warning("Insufficient history for Volatility calc. Defaulting to Max Leverage.")
-                            target_scalar = leverage_cap
-                    else:
-                        logger.warning("No history data fetched. Defaulting scalar to 1.0.")
-                        
-                except Exception as vol_e:
-                    logger.error(f"Error calculating Volatility Scalar: {vol_e}. Defaulting to 1.0.")
-            
-            # 3. Live Strategy Calculation
-            from ancser_quant.execution.strategy import LiveStrategy
-            strat = LiveStrategy()
-            
-            # Use the loaded config
-            res = strat.calculate_targets(strategy_config)
-            
-            if "error" in res:
-                logger.error(f"Strategy Calculation Error: {res['error']}")
-                return
+            # 1. Load Live Strategy Config
+            config_path = f"config/live_strategy_{account_name}.json" if account_name != "Main" else "config/live_strategy.json"
+            if not os.path.exists(config_path):
+                # Always fallback to Main if specific config not found
+                fallback_path = "config/live_strategy.json"
+                if os.path.exists(fallback_path):
+                    logger.info(f"Using default strategy config for {account_name}.")
+                    config_path = fallback_path
+                else:
+                    logger.warning(f"No strategy config found for {account_name}. Skipping.")
+                    continue
 
-            # Extract Results
-            target_weights = res.get('allocations', {})
-            vol_metrics = res.get('vol_metrics', {})
-            
-            # Update target scalar from LiveStrategy result (it handles vol targeting internally now)
-            final_scalar = vol_metrics.get('final_scalar', 1.0)
-            
-            logger.info(f"Rebalance Logic Executed. Final Target Exposure Scalar: {final_scalar:.2f}x")
-            
-            if not target_weights:
-                logger.warning("No target weights generated. Portfolio may be empty.")
-            else:
-                logger.info(f"Generated Targets for {len(target_weights)} assets.")
-                
-            # 4. Order Management System (OMS)
-            from ancser_quant.execution.oms import OrderManagementSystem
-            oms = OrderManagementSystem()
-            
-            logger.info("Executing Rebalance Orders...")
-            oms.generate_and_execute_orders(target_weights, strategy_config=strategy_config)
-
-            # --- Inject Tracker Here ---
             try:
-                from ancser_quant.execution.tracker import LiveTracker
-                tracker = LiveTracker()
+                with open(config_path, 'r') as f:
+                    strategy_config = json.load(f)
                 
-                # Fetch latest account equity and today's P&L from Alpaca to log
-                acc = self.alpaca.get_account()
-                equity = float(acc.get('equity', 0.0))
+                logger.info(f"Loaded Strategy Config for {account_name}")
+                universe = strategy_config.get('universe', [])
+                factors = strategy_config.get('active_factors', [])
                 
-                # Use daily P&L. If history is not available, just default to 0
-                portfolio_history = self.alpaca.get_portfolio_history(period="1D", timeframe="1D")
-                pl_vals = portfolio_history.get('profit_loss', [0])
-                pl_pcts = portfolio_history.get('profit_loss_pct', [0])
+                if not universe or not factors:
+                    logger.warning(f"Universe or Factors empty for {account_name}. Skipping.")
+                    continue
+
+                # 3. Live Strategy Calculation 
+                # (Volatility fetched optimally inside the strategy method now anyway)
+                from ancser_quant.execution.strategy import LiveStrategy
+                strat = LiveStrategy(account_name=account_name)
                 
-                day_pnl = pl_vals[-1] if pl_vals else 0.0
-                total_pnl_pct = pl_pcts[-1] if pl_pcts else 0.0
+                # Use the loaded config
+                res = strat.calculate_targets(strategy_config)
                 
-                today_str = datetime.now().strftime('%Y-%m-%d')
+                if "error" in res:
+                    logger.error(f"Strategy Calculation Error for {account_name}: {res['error']}")
+                    continue
+
+                # Extract Results
+                target_weights = res.get('allocations', {})
+                vol_metrics = res.get('vol_metrics', {})
+                final_scalar = vol_metrics.get('final_scalar', 1.0)
                 
-                tracker.record_daily_state(
-                    date_str=today_str,
-                    equity=equity,
-                    day_pnl=day_pnl,
-                    total_pnl_pct=total_pnl_pct,
-                    allocations=target_weights,
-                    factors=factors,
-                    target_scalar=final_scalar
-                )
-            except Exception as e_track:
-                logger.error(f"Failed to record tracker state: {e_track}")
+                logger.info(f"Rebalance Logic Executed for {account_name}. Target Exposure Scalar: {final_scalar:.2f}x")
+                
+                if not target_weights:
+                    logger.warning(f"No target weights generated for {account_name}. Portfolio may be empty.")
+                else:
+                    logger.info(f"Generated Targets for {len(target_weights)} assets for {account_name}.")
+                    
+                # 4. Order Management System (OMS)
+                from ancser_quant.execution.oms import OrderManagementSystem
+                oms = OrderManagementSystem(account_name=account_name)
+                
+                logger.info(f"Executing Rebalance Orders for {account_name}...")
+                oms.generate_and_execute_orders(target_weights, strategy_config=strategy_config)
+
+                # --- Inject Tracker Here ---
+                try:
+                    from ancser_quant.execution.tracker import LiveTracker
+                    tracker = LiveTracker(account_name=account_name)
+                    
+                    # Fetch latest account equity and today's P&L from Alpaca to log
+                    acc_adapter = AlpacaAdapter(account_name=account_name)
+                    acc = acc_adapter.get_account()
+                    equity = float(acc.get('equity', 0.0))
+                    
+                    # Use daily P&L. If history is not available, just default to 0
+                    portfolio_history = acc_adapter.get_portfolio_history(period="1D", timeframe="1D")
+                    pl_vals = portfolio_history.get('profit_loss', [0])
+                    pl_pcts = portfolio_history.get('profit_loss_pct', [0])
+                    
+                    day_pnl = pl_vals[-1] if pl_vals else 0.0
+                    total_pnl_pct = pl_pcts[-1] if pl_pcts else 0.0
+                    
+                    today_str = datetime.now().strftime('%Y-%m-%d')
+                    
+                    tracker.record_daily_state(
+                        date_str=today_str,
+                        equity=equity,
+                        day_pnl=day_pnl,
+                        total_pnl_pct=total_pnl_pct,
+                        allocations=target_weights,
+                        factors=factors,
+                        target_scalar=final_scalar
+                    )
+                except Exception as e_track:
+                    logger.error(f"Failed to record tracker state for {account_name}: {e_track}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                # --- End Tracker ---
+
+                # Write daily lock so restarts won't re-execute today
+                _write_daily_lock(account_name)
+
+                logger.info(f"Rebalance Cycle Completed for {account_name}.")
+                
+            except Exception as e:
+                logger.error(f"Rebalance Failed for {account_name}: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
-            # --- End Tracker ---
-
-            # Write daily lock so restarts won't re-execute today
-            _write_daily_lock()
-
-            logger.info("Rebalance Cycle Completed.")
-            
-        except Exception as e:
-            logger.error(f"Rebalance Failed: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
             
         pass 
 

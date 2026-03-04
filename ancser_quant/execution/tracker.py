@@ -12,8 +12,12 @@ class LiveTracker:
     This provides a persistent history to compare against model predictions.
     """
     
-    def __init__(self, log_path="logs/live_performance_log.json"):
-        self.log_path = log_path
+    def __init__(self, account_name: str = "Main", log_path=None):
+        if not log_path:
+            self.log_path = f"logs/live_performance_log_{account_name}.json" if account_name != "Main" else "logs/live_performance_log.json"
+        else:
+            self.log_path = log_path
+            
         os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
         if not os.path.exists(self.log_path):
             with open(self.log_path, 'w') as f:

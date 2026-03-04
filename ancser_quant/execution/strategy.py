@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import polars as pl
 from datetime import datetime, timedelta
 from ancser_quant.data.alpaca_adapter import AlpacaAdapter
 from ancser_quant.backtest import BacktestEngine
@@ -10,8 +11,9 @@ class LiveStrategy:
     Used by both the Dashboard (Preview) and Main Loop (Execution).
     """
     
-    def __init__(self):
-        self.alpaca = AlpacaAdapter()
+    def __init__(self, account_name: str = "Main"):
+        self.account_name = account_name
+        self.alpaca = AlpacaAdapter(account_name)
         
     def calculate_targets(self, config: dict, current_equity: float = None) -> dict:
         """
@@ -74,7 +76,48 @@ class LiveStrategy:
             }
             descending_factors = {'Reversion', 'Volatility', 'Microstructure', 'Drift-Reversion'}
             
+            # Load MWU setting
+            use_mwu = config.get('use_mwu', False)
             weight_per_factor = 1.0 / len(factors)
+            factor_weights = {f: weight_per_factor for f in factors}
+            
+            # MWU Process
+            if use_mwu:
+                from ancser_quant.alpha.mwu import MWUEngine
+                mwu = MWUEngine(factors)
+                
+                # We need historical factor ranks and forward returns to train MWU
+                # To align with Backtest engine exactly:
+                factor_df_mwu = factor_df_pl.with_columns([
+                    (pl.col("close").shift(-1).over("symbol") / pl.col("close") - 1).alias("fwd_ret")
+                ]).to_pandas()
+                
+                factor_df_mwu['timestamp'] = pd.to_datetime(factor_df_mwu['timestamp'])
+                
+                # Precompute structures like backtest
+                dates = sorted(factor_df_mwu['timestamp'].unique())
+                fwd_ret_pivot = factor_df_mwu.pivot_table(index='timestamp', columns='symbol', values='fwd_ret')
+                
+                factor_pivots = {}
+                for f, col in col_map.items():
+                    if f in factors and col in factor_df_mwu.columns:
+                        factor_pivots[f] = factor_df_mwu.pivot_table(index='timestamp', columns='symbol', values=col)
+                        
+                for i, date in enumerate(dates[:-1]):
+                    if i > 0:
+                        day_ics = {}
+                        if date in fwd_ret_pivot.index:
+                            fwd_ret_row = fwd_ret_pivot.loc[date].dropna()
+                            for f in factors:
+                                if f in factor_pivots and date in factor_pivots[f].index:
+                                    fac_row = factor_pivots[f].loc[date].dropna()
+                                    common = fac_row.index.intersection(fwd_ret_row.index)
+                                    if len(common) > 5:
+                                        corr = fac_row[common].corr(fwd_ret_row[common], method='spearman')
+                                        day_ics[f] = 0.0 if np.isnan(corr) else corr
+                        mwu.update(date, day_ics)
+                
+                factor_weights = mwu.weights.copy()
             
             for f in factors:
                 if f not in col_map:
@@ -86,7 +129,7 @@ class LiveStrategy:
                     factor_vals = latest_data[col_name].reindex(closes.columns)
                     ascending = f not in descending_factors
                     factor_rank = factor_vals.rank(pct=True, ascending=ascending)
-                    scores += factor_rank.fillna(0.5) * weight_per_factor
+                    scores += factor_rank.fillna(0.5) * factor_weights[f]
 
             # 3. Portfolio Construction
             # Select Top 5 Stocks
@@ -105,7 +148,8 @@ class LiveStrategy:
                 "allocations": allocations, # Symbol -> Weight (e.g. 0.20)
                 "vol_metrics": vol_metrics,
                 "latest_prices": closes.iloc[-1].to_dict(),
-                "factor_scores": scores.to_dict()
+                "factor_scores": scores.to_dict(),
+                "factor_weights": factor_weights
             }
             
         except Exception as e:

@@ -18,11 +18,18 @@ class AlpacaAdapter:
     Fetches data from Alpaca (Paid/Free) and adapts to Titan Schema.
     Also handles Account info.
     """
-    def __init__(self):
-        self.api_key = os.getenv("APCA_API_KEY_ID")
-        self.secret_key = os.getenv("APCA_API_SECRET_KEY")
+    def __init__(self, account_name: str = "Main"):
+        self.account_name = account_name
+        self.api_key = os.getenv("APCA_API_KEY_ID") if account_name == "Main" else os.getenv(f"APCA_API_KEY_ID_{account_name.upper()}")
+        self.secret_key = os.getenv("APCA_API_SECRET_KEY") if account_name == "Main" else os.getenv(f"APCA_API_SECRET_KEY_{account_name.upper()}")
+        
+        # Fallback if user named it MAIN strictly inside env vars
+        if not self.api_key and account_name.upper() == "MAIN":
+            self.api_key = os.getenv("APCA_API_KEY_ID_MAIN")
+            self.secret_key = os.getenv("APCA_API_SECRET_KEY_MAIN")
+
         if not self.api_key:
-            raise ValueError("Alpaca API keys missing.")
+            raise ValueError(f"Alpaca API keys missing for account: {account_name}")
             
         self.data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
         self.trading_client = TradingClient(self.api_key, self.secret_key, paper=True) # Default to paper
